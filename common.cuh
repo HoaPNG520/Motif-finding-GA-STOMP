@@ -28,6 +28,7 @@
 // ── Numerical constants ───────────────────────────────────────────────────────
 #define EPS              1e-8f    // guard against division by zero
 #define INF_F            3.4028235e+38f   // float max (initial MP value)
+#define M_PI 3.14159265358979323846
 
 // ── Atomic min for float ──────────────────────────────────────────────────────
 // CUDA has no native atomicMin(float*,float); we reinterpret via int CAS.
