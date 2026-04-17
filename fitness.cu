@@ -1,5 +1,5 @@
 // =============================================================================
-//  fitness.cu — Unsupervised composite fitness for GA individuals
+//  fitness.cu -- Unsupervised composite fitness for GA individuals
 //
 //  All computation is CPU-side; it receives the host-side MP array from
 //  run_stomp and derives three independent quality signals.
@@ -8,7 +8,7 @@
 //    Without labels, we cannot use classification accuracy.  Instead we
 //    proxy "motif quality" with three signals that are theoretically
 //    motivated and empirically correlated with ground-truth motif recall
-//    in synthetic benchmarks (see README §Validation).
+//    in synthetic benchmarks (see README SValidation).
 // =============================================================================
 
 #include "fitness.cuh"
@@ -18,17 +18,17 @@
 #include <vector>
 #include <numeric>
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Signal 1 — Motif Contrast
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
+//  Signal 1 -- Motif Contrast
+// -----------------------------------------------------------------------------
 //  contrast = (d_second - d_top) / mean(MP)
 //
 //  d_top    = MP minimum (best motif pair distance)
 //  d_second = MP value at position k (the min_motif_count-th smallest value)
-//             — a proxy for the "background" distance level
+//             -- a proxy for the "background" distance level
 //
-//  High contrast → top motif is far below background → genuinely distinctive.
-//  Low contrast  → many near-trivial matches → m likely too small.
+//  High contrast -> top motif is far below background -> genuinely distinctive.
+//  Low contrast  -> many near-trivial matches -> m likely too small.
 static float compute_contrast(
     const std::vector<float>& sorted_mp,
     int profile_len,
@@ -49,13 +49,13 @@ static float compute_contrast(
     return 1.0f - expf(-contrast);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Signal 2 — Profile Entropy
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
+//  Signal 2 -- Profile Entropy
+// -----------------------------------------------------------------------------
 //  Histogram entropy of the MP distribution, normalised by log2(HIST_BINS).
 //
-//  High entropy → diverse profile → m captures meaningful structure.
-//  Low entropy  → all distances near zero or all near one value →
+//  High entropy -> diverse profile -> m captures meaningful structure.
+//  Low entropy  -> all distances near zero or all near one value ->
 //                 degenerate profile (m too small = trivial matches, or
 //                 m too large = everything looks alike).
 static float compute_entropy(
@@ -85,9 +85,9 @@ static float compute_entropy(
     return entropy / log2f((float)HIST_BINS);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Signal 3 — Motif Count Validity
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
+//  Signal 3 -- Motif Count Validity
+// -----------------------------------------------------------------------------
 //  Count subsequences whose MP distance is within a relative threshold of
 //  the global minimum, then penalise the distance from the target k.
 //
@@ -114,9 +114,9 @@ static float compute_count_score(
     return fmaxf(0.0f, score);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 //  Main fitness evaluator
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 FitnessScore evaluate_fitness(
     const float*      mp,
     int               profile_len,
@@ -147,7 +147,7 @@ FitnessScore evaluate_fitness(
         return fs;
     }
 
-    // ── Three signals ─────────────────────────────────────────────────────────
+    // -- Three signals ---------------------------------------------------------
     fs.contrast    = compute_contrast(sorted_mp, profile_len,
                                       ind.min_motif_count);
     fs.entropy     = compute_entropy(mp, profile_len, mp_min, mp_max);
@@ -156,7 +156,7 @@ FitnessScore evaluate_fitness(
                                          ind.min_motif_count,
                                          fs.discovered_motifs);
 
-    // ── Composite weighted sum ────────────────────────────────────────────────
+    // -- Composite weighted sum ------------------------------------------------
     fs.composite = W_CONTRAST * fs.contrast
                  + W_ENTROPY  * fs.entropy
                  + W_COUNT    * fs.count_score;
@@ -164,13 +164,13 @@ FitnessScore evaluate_fitness(
     return fs;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 //  Logging helper
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 void print_fitness(const Individual& ind, const FitnessScore& fs)
 {
     printf("  Individual: m=%-4d  ez=%.2f  k=%-3d  "
-           "│ fit=%.4f  (contrast=%.3f  entropy=%.3f  count=%.3f  found=%d)\n",
+           "| fit=%.4f  (contrast=%.3f  entropy=%.3f  count=%.3f  found=%d)\n",
            ind.window_size, ind.ez_factor, ind.min_motif_count,
            fs.composite, fs.contrast, fs.entropy, fs.count_score,
            fs.discovered_motifs);
