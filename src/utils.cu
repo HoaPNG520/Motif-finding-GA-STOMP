@@ -24,17 +24,16 @@
 //  cancellation for large-mean signals.  For typical z-normalised inputs this
 //  is fine; for production code consider Welford's online algorithm.
 __global__ void compute_stats_kernel(
-    const float *__restrict__ T,
-    float *means,
-    float *stds,
+    const float* __restrict__ T,
+    float*       means,
+    float*       stds,
     int n, int m)
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-    int L = n - m + 1; // profile length
-    if (i >= L)
-        return;
+    int L = n - m + 1;                // profile length
+    if (i >= L) return;
 
-    float sum = 0.0f;
+    float sum  = 0.0f;
     float sum2 = 0.0f;
 
     // Inner loop -- reads m consecutive floats starting at T[i]
@@ -42,19 +41,18 @@ __global__ void compute_stats_kernel(
     // The overlap is m-1 elements: full warp fetches cover a width of
     // BLOCK_SIZE + m - 1 unique values, so the effective BW saving via
     // shared memory would be ~mx.  We rely on L1 / read-only cache here.
-    for (int k = 0; k < m; k++)
-    {
+    for (int k = 0; k < m; k++) {
         float v = __ldg(&T[i + k]);
-        sum += v;
+        sum  += v;
         sum2 += v * v;
     }
 
-    float mean = sum / (float)m;
-    float var = sum2 / (float)m - mean * mean;
-    var = fmaxf(0.0f, var); // clamp rounding noise to >= 0
+    float mean = sum  / (float)m;
+    float var  = sum2 / (float)m - mean * mean;
+    var = fmaxf(0.0f, var);           // clamp rounding noise to >= 0
 
     means[i] = mean;
-    stds[i] = sqrtf(var) + EPS; // + EPS prevents divide-by-zero in kernel
+    stds[i]  = sqrtf(var) + EPS;      // + EPS prevents divide-by-zero in kernel
 }
 
 // -----------------------------------------------------------------------------
@@ -69,18 +67,16 @@ __global__ void compute_stats_kernel(
 //  A faster alternative is MASS (FFT convolution, O(n log n) total) but the
 //  O(nm) approach is simpler and dominated by the O(n^2) STOMP step anyway.
 __global__ void compute_qt_init_kernel(
-    const float *__restrict__ T,
-    float *QT_init,
+    const float* __restrict__ T,
+    float*       QT_init,
     int n, int m, int ez)
 {
-    int d = blockIdx.x * blockDim.x + threadIdx.x + ez; // diagonal index
+    int d = blockIdx.x * blockDim.x + threadIdx.x + ez;  // diagonal index
     int L = n - m + 1;
-    if (d >= L)
-        return;
+    if (d >= L) return;
 
     float qt = 0.0f;
-    for (int k = 0; k < m; k++)
-    {
+    for (int k = 0; k < m; k++) {
         qt += __ldg(&T[k]) * __ldg(&T[k + d]);
     }
     QT_init[d - ez] = qt;
@@ -90,18 +86,18 @@ __global__ void compute_qt_init_kernel(
 //  Host launcher -- allocates device buffers and runs both kernels
 // -----------------------------------------------------------------------------
 void precompute(
-    const float *d_T,
+    const float* d_T,
     int n, int m, int ez,
-    float **d_means_out,
-    float **d_stds_out,
-    float **d_QT_init_out)
+    float** d_means_out,
+    float** d_stds_out,
+    float** d_QT_init_out)
 {
-    int L = n - m + 1;    // profile length
-    int n_diags = L - ez; // valid diagonals
+    int L          = n - m + 1;           // profile length
+    int n_diags    = L - ez;              // valid diagonals
 
     // Allocate
-    CUDA_CHECK(cudaMalloc(d_means_out, L * sizeof(float)));
-    CUDA_CHECK(cudaMalloc(d_stds_out, L * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(d_means_out,   L       * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(d_stds_out,    L       * sizeof(float)));
     CUDA_CHECK(cudaMalloc(d_QT_init_out, n_diags * sizeof(float)));
 
     // Kernel 1 -- stats
