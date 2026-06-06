@@ -19,7 +19,6 @@
 //    n_seeds      = 5      # for multi-seed variance report
 //    verbose      = 1
 //    sampling_rate;   // default 12000
-//    expected_w;
 //  Missing keys fall back to GAConfig defaults.
 //  Unknown keys are ignored with a warning.
 // =============================================================================
@@ -35,7 +34,6 @@ struct FullConfig
     char input_path[512]; // path to input CSV/bin (empty = synthetic)
     char output_dir[512]; // directory for output files
     int sampling_rate;    // default 12000
-    int expected_w;
 };
 
 // Default values

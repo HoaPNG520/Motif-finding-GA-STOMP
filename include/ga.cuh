@@ -38,10 +38,6 @@ struct GAConfig
     // SCRIMP++ approximation: during GA search use approx_frac < 1.0
     // to evaluate more individuals per second. Final run always uses 1.0.
     float approx_frac = 1.0f;
-    // Physics-informed window prior: sampling_rate / defect_frequency_hz
-    // Set via config file (sampling_rate and expected_w keys)
-    // Default 74 = CWRU 6205-2RS inner race at 1797 RPM, 12kHz sampling
-    int expected_w = 74;
 
     bool verbose = true;
 };

@@ -97,7 +97,6 @@ static FitnessScore evaluate_individual(
     const float *h_T,
     int n,
     float approx_frac,
-    int expected_w,
     TimingReport &timing)
 {
     STOMPConfig scfg;
@@ -169,7 +168,7 @@ GAResult run_ga(
         // Evaluate population
         std::vector<FitnessScore> scores(cfg.population_size);
         for (int i = 0; i < cfg.population_size; i++)
-            scores[i] = evaluate_individual(pop[i], h_T, n, cfg.approx_frac, cfg.expected_w, timing);
+            scores[i] = evaluate_individual(pop[i], h_T, n, cfg.approx_frac, timing);
 
         // Sort descending
         std::vector<int> idx(cfg.population_size);
@@ -213,7 +212,7 @@ GAResult run_ga(
     // Final evaluation with full STOMP + MPI recovery
     for (auto &ind : pop)
         if (ind.fitness < 0.0f)
-            evaluate_individual(ind, h_T, n, 1.0f, cfg.expected_w, timing);
+            evaluate_individual(ind, h_T, n, 1.0f, timing);
 
     std::sort(pop.begin(), pop.end(), [](const Individual &a, const Individual &b)
               { return a.fitness > b.fitness; });
