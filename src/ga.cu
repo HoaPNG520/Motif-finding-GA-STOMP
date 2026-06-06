@@ -97,7 +97,6 @@ static FitnessScore evaluate_individual(
     const float *h_T,
     int n,
     float approx_frac,
-    int expected_w,
     TimingReport &timing)
 {
     STOMPConfig scfg;
@@ -119,7 +118,7 @@ static FitnessScore evaluate_individual(
     {
         WallTimer ft;
         ft.start();
-        fs = evaluate_fitness(res.mp, res.profile_len, ind, expected_w);
+        fs = evaluate_fitness(res.mp, res.profile_len, ind);
         timing.fitness_total_ms += ft.stop();
         free(res.mp);
         free(res.mpi);
@@ -169,7 +168,7 @@ GAResult run_ga(
         // Evaluate population
         std::vector<FitnessScore> scores(cfg.population_size);
         for (int i = 0; i < cfg.population_size; i++)
-            scores[i] = evaluate_individual(pop[i], h_T, n, cfg.approx_frac, cfg.expected_w, timing);
+            scores[i] = evaluate_individual(pop[i], h_T, n, cfg.approx_frac, timing);
 
         // Sort descending
         std::vector<int> idx(cfg.population_size);
@@ -213,7 +212,7 @@ GAResult run_ga(
     // Final evaluation with full STOMP + MPI recovery
     for (auto &ind : pop)
         if (ind.fitness < 0.0f)
-            evaluate_individual(ind, h_T, n, 1.0f, cfg.expected_w, timing);
+            evaluate_individual(ind, h_T, n, 1.0f, timing);
 
     std::sort(pop.begin(), pop.end(), [](const Individual &a, const Individual &b)
               { return a.fitness > b.fitness; });
@@ -230,7 +229,7 @@ GAResult run_ga(
     best_cfg.recover_indices = true; // fill MPI[] properly on final run
 
     STOMPResult best_res = run_stomp(h_T, n, best_cfg);
-    result.best_fitness = evaluate_fitness(best_res.mp, best_res.profile_len, pop[0], cfg.expected_w);
+    result.best_fitness = evaluate_fitness(best_res.mp, best_res.profile_len, pop[0]);
     free(best_res.mp);
     free(best_res.mpi);
 
@@ -247,16 +246,15 @@ GAResult run_ga(
            result.best_fitness.composite);
     printf("|    -> Contrast        : %.4f                              |\n",
            result.best_fitness.contrast);
-    printf("|    -> Autocorr        : %.4f                              |\n",
-           result.best_fitness.autocorr);
-    printf("|    -> Size prior      : %.4f                              |\n",
-           result.best_fitness.size_prior);
+    printf("|    -> Spacing Reg     : %.4f                              |\n",
+           result.best_fitness.spacing_regularity);
+    printf("|    -> Spacing Consist : %.4f                              |\n",
+           result.best_fitness.spacing_consistency);
     printf("|    -> Count score     : %.4f                              |\n",
            result.best_fitness.count_score);
     printf("|    -> Motifs found    : %-5d                               |\n",
            result.best_fitness.discovered_motifs);
     printf("+--------------------------------------------------------------+\n\n");
-
     timing.print();
 
     return result;
