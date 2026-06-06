@@ -1,0 +1,6 @@
+*.csv
+data/
+*exe
+sample_config.ini
+results/
+*.txt
