@@ -119,7 +119,7 @@ static FitnessScore evaluate_individual(
     {
         WallTimer ft;
         ft.start();
-        fs = evaluate_fitness(res.mp, res.profile_len, ind, expected_w);
+        fs = evaluate_fitness(res.mp, res.profile_len, ind);
         timing.fitness_total_ms += ft.stop();
         free(res.mp);
         free(res.mpi);
@@ -230,7 +230,7 @@ GAResult run_ga(
     best_cfg.recover_indices = true; // fill MPI[] properly on final run
 
     STOMPResult best_res = run_stomp(h_T, n, best_cfg);
-    result.best_fitness = evaluate_fitness(best_res.mp, best_res.profile_len, pop[0], cfg.expected_w);
+    result.best_fitness = evaluate_fitness(best_res.mp, best_res.profile_len, pop[0]);
     free(best_res.mp);
     free(best_res.mpi);
 
@@ -247,10 +247,12 @@ GAResult run_ga(
            result.best_fitness.composite);
     printf("|    -> Contrast        : %.4f                              |\n",
            result.best_fitness.contrast);
-    printf("|    -> Autocorr        : %.4f                              |\n",
-           result.best_fitness.autocorr);
-    printf("|    -> Size prior      : %.4f                              |\n",
-           result.best_fitness.size_prior);
+    printf("|    -> Autocorr Peak   : %.4f                              |\n",
+           result.best_fitness.autocorr_peak);
+    printf("|    -> Spacing Reg     : %.4f                              |\n",
+           result.best_fitness.spacing_regularity);
+    printf("|    -> Spacing Consist : %.4f                              |\n",
+           result.best_fitness.spacing_consistency);
     printf("|    -> Count score     : %.4f                              |\n",
            result.best_fitness.count_score);
     printf("|    -> Motifs found    : %-5d                               |\n",
