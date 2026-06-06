@@ -20,65 +20,67 @@
 // -----------------------------------------------------------------------------
 //  GA hyperparameters
 // -----------------------------------------------------------------------------
-struct GAConfig {
-    int   m_min            = 10;
-    int   m_max            = 300;
-    float ez_min           = 0.25f;
-    float ez_max           = 1.0f;
-    int   k_min            = 2;
-    int   k_max            = 20;
+struct GAConfig
+{
+    int m_min = 10;
+    int m_max = 300;
+    float ez_min = 0.25f;
+    float ez_max = 1.0f;
+    int k_min = 2;
+    int k_max = 20;
 
-    int   population_size  = 50;
-    int   generations      = 30;
-    int   tournament_k     = 3;
-    float mutation_rate    = 0.30f;
-    int   elite_count      = 2;
+    int population_size = 50;
+    int generations = 30;
+    int tournament_k = 3;
+    float mutation_rate = 0.30f;
+    int elite_count = 2;
 
     // SCRIMP++ approximation: during GA search use approx_frac < 1.0
     // to evaluate more individuals per second. Final run always uses 1.0.
-    float approx_frac      = 1.0f;
+    float approx_frac = 1.0f;
+    // Physics-informed window prior: sampling_rate / defect_frequency_hz
+    // Set via config file (sampling_rate and expected_w keys)
+    // Default 74 = CWRU 6205-2RS inner race at 1797 RPM, 12kHz sampling
+    int expected_w = 74;
 
-    bool  verbose          = true;
+    bool verbose = true;
 };
 
 // -----------------------------------------------------------------------------
 //  GA output
 // -----------------------------------------------------------------------------
-struct GAResult {
-    Individual    best_individual;
-    FitnessScore  best_fitness;
-    std::vector<float> fitness_history;   // best fitness per generation
-    TimingReport  timing;
+struct GAResult
+{
+    Individual best_individual;
+    FitnessScore best_fitness;
+    std::vector<float> fitness_history; // best fitness per generation
+    TimingReport timing;
 };
 
 // -----------------------------------------------------------------------------
 //  GA operators
 // -----------------------------------------------------------------------------
-Individual random_individual(const GAConfig& cfg, unsigned int seed);
+Individual random_individual(const GAConfig &cfg, unsigned int seed);
 
 Individual tournament_select(
-    const std::vector<Individual>& pop,
-    int k
-);
+    const std::vector<Individual> &pop,
+    int k);
 
 Individual crossover(
-    const Individual& a,
-    const Individual& b,
-    const GAConfig&   cfg
-);
+    const Individual &a,
+    const Individual &b,
+    const GAConfig &cfg);
 
 Individual mutate(
-    Individual      ind,
-    float           temperature,
-    const GAConfig& cfg
-);
+    Individual ind,
+    float temperature,
+    const GAConfig &cfg);
 
 // -----------------------------------------------------------------------------
 //  Main GA loop
 // -----------------------------------------------------------------------------
 GAResult run_ga(
-    const float*    h_T,
-    int             n,
-    const GAConfig& cfg,
-    unsigned int    seed = 42
-);
+    const float *h_T,
+    int n,
+    const GAConfig &cfg,
+    unsigned int seed = 42);
