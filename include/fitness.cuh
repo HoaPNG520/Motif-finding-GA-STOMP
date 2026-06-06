@@ -54,7 +54,7 @@ static constexpr int HIST_BINS = 50;
 FitnessScore evaluate_fitness(
     const float *mp, // [profile_len]  Matrix Profile distances
     int profile_len,
-    const Individual &ind);
+    const Individual &in, int expected_w);
 
 // -- Pretty-print a fitness breakdown -----------------------------------------
 void print_fitness(const Individual &ind, const FitnessScore &fs);
