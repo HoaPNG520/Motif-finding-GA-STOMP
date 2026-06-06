@@ -51,46 +51,7 @@ static float compute_contrast(
 }
 
 // -----------------------------------------------------------------------------
-//  Signal 2 -- Profile Entropy
-// -----------------------------------------------------------------------------
-//  Histogram entropy of the MP distribution, normalised by log2(HIST_BINS).
-//
-//  High entropy -> diverse profile -> m captures meaningful structure.
-//  Low entropy  -> all distances near zero or all near one value ->
-//                 degenerate profile (m too small = trivial matches, or
-//                 m too large = everything looks alike).
-static float compute_entropy(
-    const float *mp,
-    int profile_len,
-    float mp_min, float mp_max)
-{
-    float range = mp_max - mp_min + EPS;
-    float bin_w = range / (float)HIST_BINS;
-
-    std::vector<int> hist(HIST_BINS, 0);
-    for (int i = 0; i < profile_len; i++)
-    {
-        int bin = (int)((mp[i] - mp_min) / bin_w);
-        bin = std::min(bin, HIST_BINS - 1);
-        hist[bin]++;
-    }
-
-    float entropy = 0.0f;
-    for (int b = 0; b < HIST_BINS; b++)
-    {
-        if (hist[b] > 0)
-        {
-            float p = (float)hist[b] / (float)profile_len;
-            entropy -= p * log2f(p);
-        }
-    }
-
-    // Normalise: max entropy = log2(HIST_BINS) when uniform distribution
-    return entropy / log2f((float)HIST_BINS);
-}
-
-// -----------------------------------------------------------------------------
-//  Signal 3 -- Motif Count Validity
+//  Signal 2 -- Motif Count Validity
 // -----------------------------------------------------------------------------
 //  Count subsequences whose MP distance is within a relative threshold of
 //  the global minimum, then penalise the distance from the target k.
@@ -205,13 +166,10 @@ FitnessScore evaluate_fitness(
     // -- Three signals ---------------------------------------------------------
     fs.contrast = compute_contrast(sorted_mp, profile_len,
                                    ind.min_motif_count);
-    fs.entropy = compute_entropy(mp, profile_len, mp_min, mp_max);
     fs.count_score = compute_count_score(mp, profile_len,
                                          mp_min, mean_mp,
                                          ind.min_motif_count,
                                          fs.discovered_motifs);
-
-    // NEW: Calculate Autocorr Peak
     fs.autocorr_peak = compute_autocorr_peak(mp, profile_len, ind.window_size);
 
     // -- Composite weighted sum (v3 Formulation)------------------------------------------------

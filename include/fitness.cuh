@@ -31,17 +31,16 @@ struct Individual
     float fitness;       // set by evaluate_fitness; -INF before evaluation
 };
 
-static constexpr int HIST_BINS = 50;
+static constexpr int HIST_BINS = 50; // retained for count_score threshold
 
 // -- Decomposed fitness score (useful for logging and analysis) ----------------
 struct FitnessScore
 {
     float composite;       // final weighted score in [0, 1]
     float contrast;        // signal 1
-    float entropy;         // signal 2 (normalised)
+    float autocorr_peak;   // signal 2: autocorrelation peak alignment
     float count_score;     // signal 3
     int discovered_motifs; // how many motifs were found below threshold
-    float autocorr_peak;   // NEW: Approach 3 Autocorrelation peak alignment
 };
 
 // -- Main fitness evaluator ----------------------------------------------------

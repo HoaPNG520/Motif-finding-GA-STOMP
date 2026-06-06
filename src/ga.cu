@@ -236,8 +236,8 @@ GAResult run_ga(
            result.best_fitness.composite);
     printf("|    -> Contrast        : %.4f                              |\n",
            result.best_fitness.contrast);
-    printf("|    -> Entropy         : %.4f                              |\n",
-           result.best_fitness.entropy);
+    printf("|    -> Autocorr Peak   : %.4f                              |\n",
+           result.best_fitness.autocorr_peak);
     printf("|    -> Count score     : %.4f                              |\n",
            result.best_fitness.count_score);
     printf("|    -> Motifs found    : %-5d                               |\n",
