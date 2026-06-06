@@ -50,41 +50,8 @@ static float compute_contrast(
     return 1.0f - expf(-contrast);
 }
 
-static float compute_autocorr(
-    const float *mp,
-    int profile_len,
-    int window_size)
-{
-    // Mean-center the profile
-    float mean = 0.0f;
-    for (int i = 0; i < profile_len; i++)
-        mean += mp[i];
-    mean /= (float)profile_len;
-
-    // Autocorrelation at lag = window_size
-    float num = 0.0f, denom = 0.0f;
-    for (int i = 0; i < profile_len; i++)
-    {
-        float centered = mp[i] - mean;
-        denom += centered * centered;
-        if (i + window_size < profile_len)
-            num += centered * (mp[i + window_size] - mean);
-    }
-    float autocorr = (denom > EPS) ? num / denom : 0.0f;
-    return fmaxf(0.0f, fminf(1.0f, autocorr));
-}
-
-// ADD size prior:
-static float compute_size_prior(
-    int window_size,
-    int expected_w) // sampling_rate / defect_hz
-{
-    float diff = (float)(window_size - expected_w);
-    float sigma = (float)expected_w * 0.5f;
-    return expf(-0.5f * (diff / sigma) * (diff / sigma));
-}
 // -----------------------------------------------------------------------------
-//  Signal 3 -- Motif Count Validity
+//  Signal 2 -- Motif Count Validity
 // -----------------------------------------------------------------------------
 //  Count subsequences whose MP distance is within a relative threshold of
 //  the global minimum, then penalise the distance from the target k.
@@ -115,13 +82,70 @@ static float compute_count_score(
 }
 
 // -----------------------------------------------------------------------------
+//  Signal 3 & 4 -- Spacing Regularity & Consistency (Approach 6)
+// -----------------------------------------------------------------------------
+// Finds the top 5% of motifs and measures the coefficient of variation (CV)
+// of the gaps between them. Penalizes irregular spacing and penalizes gaps
+// that do not match the proposed window size `w`.
+static void compute_spacing_metrics(
+    const float *mp,
+    const std::vector<float> &sorted_mp,
+    int profile_len,
+    int w,
+    float &regularity_out,
+    float &consistency_out)
+{
+    // 5th percentile threshold
+    float threshold = sorted_mp[profile_len / 20];
+
+    std::vector<int> motif_idx;
+    for (int i = 0; i < profile_len; i++)
+    {
+        if (mp[i] <= threshold)
+            motif_idx.push_back(i);
+    }
+
+    if (motif_idx.size() < 4)
+    {
+        regularity_out = 0.0f;
+        consistency_out = 0.0f;
+        return;
+    }
+
+    // Compute gaps between consecutive motif occurrences
+    std::vector<float> gaps;
+    for (size_t i = 1; i < motif_idx.size(); i++)
+    {
+        gaps.push_back((float)(motif_idx[i] - motif_idx[i - 1]));
+    }
+
+    float mean_gap = 0.0f;
+    for (float g : gaps)
+        mean_gap += g;
+    mean_gap /= gaps.size();
+
+    float var = 0.0f;
+    for (float g : gaps)
+        var += (g - mean_gap) * (g - mean_gap);
+    float std_gap = sqrtf(var / gaps.size());
+
+    // Regularity: penalize high coefficient of variation
+    float cv = std_gap / (mean_gap + EPS);
+    regularity_out = 1.0f / (1.0f + cv);
+
+    // Consistency: mean gap should approximate the window size
+    float diff = mean_gap - (float)w;
+    float sigma = (float)w * 0.50f;
+    consistency_out = expf(-0.5f * (diff / sigma) * (diff / sigma));
+}
+
+// -----------------------------------------------------------------------------
 //  Main fitness evaluator
 // -----------------------------------------------------------------------------
 FitnessScore evaluate_fitness(
     const float *mp,
     int profile_len,
-    const Individual &ind,
-    int expected_w)
+    const Individual &ind)
 {
     FitnessScore fs{};
 
@@ -151,15 +175,15 @@ FitnessScore evaluate_fitness(
         return fs;
     }
 
-    // -- Four signals ---------------------------------------------------------
+    // -- Compute Signals ---------------------------------------------------------
     fs.contrast = compute_contrast(sorted_mp, profile_len, ind.min_motif_count);
-    fs.autocorr = compute_autocorr(mp, profile_len, ind.window_size);
-    fs.count_score = compute_count_score(mp, profile_len, mp_min, mean_mp,
-                                         ind.min_motif_count, fs.discovered_motifs);
-    fs.size_prior = compute_size_prior(ind.window_size, expected_w);
+    fs.count_score = compute_count_score(mp, profile_len, mp_min, mean_mp, ind.min_motif_count, fs.discovered_motifs);
 
-    // -- Composite weighted sum ------------------------------------------------
-    fs.composite = W_CONTRAST * fs.contrast + W_AUTOCORR * fs.autocorr + W_COUNT * fs.count_score + W_SIZE_PRIOR * fs.size_prior;
+    // NEW: Calculate Spacing Metrics
+    compute_spacing_metrics(mp, sorted_mp, profile_len, ind.window_size, fs.spacing_regularity, fs.spacing_consistency);
+
+    // -- Composite weighted sum (v6 Formulation) -------------------------------
+    fs.composite = 0.40f * fs.contrast + 0.30f * fs.spacing_regularity + 0.20f * fs.spacing_consistency + 0.10f * fs.count_score;
 
     return fs;
 }
@@ -170,8 +194,7 @@ FitnessScore evaluate_fitness(
 void print_fitness(const Individual &ind, const FitnessScore &fs)
 {
     printf("  Individual: m=%-4d  ez=%.2f  k=%-3d  "
-           "| fit=%.4f  (contrast=%.3f  autocorr=%.3f  size_prior=%.3f  count=%.3f  found=%d)\n",
+           "| fit=%.4f  (contrast=%.3f  reg=%.3f  consist=%.3f)\n",
            ind.window_size, ind.ez_factor, ind.min_motif_count,
-           fs.composite, fs.contrast, fs.autocorr, fs.size_prior, fs.count_score,
-           fs.discovered_motifs);
+           fs.composite, fs.contrast, fs.spacing_regularity, fs.spacing_consistency);
 }

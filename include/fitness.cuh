@@ -2,27 +2,25 @@
 // =============================================================================
 //  fitness.cuh -- Unsupervised composite fitness for GA individuals
 //
-//  Fitness is a weighted sum of three independent signals derived from the
-//  Matrix Profile returned by STOMP.  No labels are required.
-//
 //  +----------------------+--------------------------------------------------+
 //  |  Signal              |  Intuition                                       |
 //  +----------------------+--------------------------------------------------+
-//  |  Contrast  (w=0.50)  |  Gap between top motif and background.           |
-//  |                      |  High gap -> motif is genuinely distinctive.      |
+//  |  Contrast  (w=0.40)  |  Gap between top motif and background.           |
+//  |                      |  High gap -> motif is genuinely distinctive.     |
 //  +----------------------+--------------------------------------------------+
-//  |  Entropy   (w=0.30)  |  Histogram entropy of MP values.                 |
-//  |                      |  Low entropy -> trivial/degenerate profile (bad). |
+//  |  Regularity(w=0.30)  |  Coefficient of Variation of motif gaps.         |
+//  |                      |  High regularity -> motifs appear periodically.  |
 //  +----------------------+--------------------------------------------------+
-//  |  Count     (w=0.20)  |  Closeness of discovered motifs to target k.    |
-//  |                      |  Penalises both too many and too few matches.    |
+//  |  Consistency(w=0.20) |  Difference between mean motif gap and `m`.      |
+//  |                      |  Ensures window size matches the discovered gap. |
+//  +----------------------+--------------------------------------------------+
+//  |  Count     (w=0.10)  |  Closeness of discovered motifs to target k.     |
 //  +----------------------+--------------------------------------------------+
 // =============================================================================
 
 #include "common.cuh"
 #include <vector>
 
-// -- GA individual: the three jointly-optimised hyperparameters ----------------
 struct Individual
 {
     int window_size;     // m  in [m_min, m_max]
@@ -31,30 +29,19 @@ struct Individual
     float fitness;       // set by evaluate_fitness; -INF before evaluation
 };
 
-// -- Decomposed fitness score (useful for logging and analysis) ----------------
 struct FitnessScore
 {
-    float composite;       // final weighted score in [0, 1]
-    float contrast;        // signal 1
-    float autocorr;        // signal 2
-    float count_score;     // signal 3
-    int discovered_motifs; // how many motifs were found below threshold
-    float size_prior;
+    float composite;           // final weighted score in [0, 1]
+    float contrast;            // signal 1
+    float count_score;         // signal 2
+    int discovered_motifs;     // how many motifs were found below threshold
+    float spacing_regularity;  // NEW: Approach 6 regularity
+    float spacing_consistency; // NEW: Approach 6 self-consistency
 };
 
-// -- Fitness weights -----------------------------------------------------------
-static constexpr float W_CONTRAST = 0.35f;
-static constexpr float W_AUTOCORR = 0.35f;
-static constexpr float W_COUNT = 0.15f;
-static constexpr float W_SIZE_PRIOR = 0.15f;
-static constexpr int HIST_BINS = 50;
-
-// -- Main fitness evaluator ----------------------------------------------------
-// Runs entirely on the CPU using the host-side MP returned by run_stomp.
 FitnessScore evaluate_fitness(
-    const float *mp, // [profile_len]  Matrix Profile distances
+    const float *mp,
     int profile_len,
-    const Individual &in, int expected_w);
+    const Individual &ind);
 
-// -- Pretty-print a fitness breakdown -----------------------------------------
 void print_fitness(const Individual &ind, const FitnessScore &fs);
