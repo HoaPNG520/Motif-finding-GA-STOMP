@@ -132,7 +132,6 @@ static void compute_spacing_metrics(
     // Regularity: penalize high coefficient of variation
     float cv = std_gap / (mean_gap + EPS);
     regularity_out = 1.0f / (1.0f + cv);
-
     // Consistency: mean gap must fall in physically plausible range
     // For bearing data at 12kHz, defect periods are 40-300 samples
     // (corresponds to ~40Hz-300Hz fault frequencies)
@@ -141,11 +140,13 @@ static void compute_spacing_metrics(
     const float GAP_LO = 30.0f;
     const float GAP_HI = 400.0f;
     if (mean_gap < GAP_LO)
-        consistency_out = mean_gap / GAP_LO;        // linear penalty: 0 at gap=0, 1 at gap=30
+        regularity_out *= (mean_gap / GAP_LO);
+    if (mean_gap < GAP_LO)
+        consistency_out = mean_gap / GAP_LO; // linear penalty: 0 at gap=0, 1 at gap=30
     else if (mean_gap > GAP_HI)
-        consistency_out = GAP_HI / mean_gap;        // linear penalty: 1 at gap=400, 0 as gap→∞
+        consistency_out = GAP_HI / mean_gap; // linear penalty: 1 at gap=400, 0 as gap→∞
     else
-        consistency_out = 1.0f;                     // full reward in plausible range
+        consistency_out = 1.0f; // full reward in plausible range
 }
 
 // -----------------------------------------------------------------------------
