@@ -175,8 +175,7 @@ FitnessScore evaluate_fitness(
     fs.autocorr_peak = compute_autocorr_peak(mp, profile_len, ind.window_size);
 
     // -- Composite weighted sum (v3 Formulation)------------------------------------------------
-    fs.composite = 0.40f * fs.contrast + 0.40f * fs.autocorr_peak + 0.20f * fs.count_score;
-
+    fs.composite = 0.50f * fs.contrast + 0.50f * fs.autocorr_peak;
     return fs;
 }
 
