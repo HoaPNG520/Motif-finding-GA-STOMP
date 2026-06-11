@@ -183,8 +183,7 @@ FitnessScore evaluate_fitness(
     compute_spacing_metrics(mp, sorted_mp, profile_len, ind.window_size, fs.spacing_regularity, fs.spacing_consistency);
 
     // -- Composite weighted sum (v6 Formulation) -------------------------------
-    fs.composite = 0.40f * fs.contrast + 0.30f * fs.spacing_regularity + 0.20f * fs.spacing_consistency + 0.10f * fs.count_score;
-
+    fs.composite = 0.40f * fs.contrast + 0.35f * fs.spacing_regularity + 0.25f * fs.spacing_consistency;
     return fs;
 }
 
