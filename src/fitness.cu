@@ -99,6 +99,7 @@ static float compute_autocorr_peak(
     std::vector<float> ac(max_lag, 0.0f);
     float denom = 0.0f;
 
+    // ── Step 1: compute autocorrelation ──────────────────────
     for (int i = 0; i < profile_len; i++)
     {
         float c = mp[i] - mean;
@@ -107,32 +108,25 @@ static float compute_autocorr_peak(
             ac[lag] += c * (mp[i + lag] - mean);
     }
 
-    // Normalize all lags first before searching
+    // ── Step 2: normalize AFTER computing ────────────────────
     for (int lag = 1; lag < max_lag; lag++)
         ac[lag] /= (denom + EPS);
 
-    // Find peak in valid search range
+    // ── Step 3: find peak ─────────────────────────────────────
     int search_lo = 8;
     int peak_lag = search_lo;
     for (int lag = search_lo + 1; lag < max_lag; lag++)
         if (ac[lag] > ac[peak_lag])
             peak_lag = lag;
 
-    // FIX: use w-based sigma, not peak_lag-based
-    // peak_lag tells us where the autocorr peaks
-    // we reward w values near that peak
-    // sigma should reflect the plausible range around w, not the peak
     float diff = (float)(w - peak_lag);
-    float sigma = (float)w * 0.30f; // ← was peak_lag * 0.30f
-
-    // Also add a floor on peak quality — if autocorr peak is weak,
-    // don't reward anything strongly
-    float peak_strength = ac[peak_lag]; // normalized, in [-1, 1]
+    float sigma = (float)w * 0.30f;
+    float peak_strength = ac[peak_lag];
     if (peak_strength <= 0.0f)
-        return 0.0f; // no meaningful periodicity detected
+        return 0.0f;
 
     float alignment = expf(-0.5f * (diff / (sigma + EPS)) * (diff / (sigma + EPS)));
-    return peak_strength * alignment; // weight by how strong the peak actually is
+    return peak_strength * alignment;
 }
 
 // -----------------------------------------------------------------------------

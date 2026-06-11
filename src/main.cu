@@ -177,7 +177,8 @@ int main(int argc, char** argv)
     if (argc >= 2 && (!strcmp(argv[1], "--help") || !strcmp(argv[1], "-h"))) {
         print_help(argv[0]); return 0;
     }
-
+    printf("\n=== GA-STOMP: Genetic Algorithm for GPU-STOMP Motif Discovery ===\n\n");
+    printf("v3-autocorr-peak\n");
     FullConfig fc = default_full_config();
     int  true_m  = 80;
     int  true_n  = 4000;
