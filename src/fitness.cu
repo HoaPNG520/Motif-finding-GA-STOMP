@@ -137,7 +137,7 @@ static void compute_spacing_metrics(
     // (corresponds to ~40Hz-300Hz fault frequencies)
     // Gaps below 30 = trivial dense matches from small windows
     // Gaps above 400 = too sparse, probably not a real periodic fault
-    const float GAP_LO = 30.0f;
+    const float GAP_LO = 50.0f;
     const float GAP_HI = 400.0f;
     if (mean_gap < GAP_LO)
         regularity_out *= (mean_gap / GAP_LO);
