@@ -249,9 +249,13 @@ warp schedulers busy to hide memory latency.
 
 ## 6. Fitness Function
 
-Three independent unsupervised signals, combined as a weighted sum.
+Two independent unsupervised signals, combined as a weighted sum:
 
-### Signal 1 — Motif Contrast (weight 0.50)
+```
+F = 0.35 × contrast + 0.65 × regularity
+```
+
+### Signal 1 — Motif Contrast (weight 0.35)
 
 Measures how far the best motif stands out from the background:
 
@@ -263,21 +267,38 @@ score    = 1 − exp(−contrast)          # soft normalisation to [0, 1]
 `d_top` = global minimum of MP (best motif pair distance).
 `d_second` = the k-th smallest MP value (proxy for background level).
 
-High contrast means the top motif is far below the average distance → it is
-genuinely distinctive, not a noise artefact.
+High contrast → top motif is far below background → genuinely distinctive.
 
-### Signal 2 — Profile Entropy (weight 0.30)
+### Signal 2 — Spacing Regularity (weight 0.65, dominant signal)
+
+Selects the **50 lowest-MP positions** and measures the Coefficient of Variation
+(CV) of the gaps between them:
 
 ```
-H(MP) = − Σ_b p_b · log₂(p_b)     (50-bin histogram)
-score = H(MP) / log₂(50)           # normalised to [0, 1]
+regularity = 1 / (1 + CV)    where  CV = std(gaps) / mean(gaps)
 ```
 
-Low entropy → all MP values concentrated at one level → degenerate profile.
-This occurs when `m` is too small (trivial near-zero matches everywhere) or
-too large (everything looks equally similar).
+**Key design decision: fixed count, not a percentage.**
 
-### Signal 3 — Motif Count Validity (weight 0.20)
+A percentage-based selection (e.g. top 5%) always selects `profile_len/20`
+positions regardless of `m`, giving `mean_gap ≈ 20` for every window size.
+This makes the CV signal window-size-blind and causes systematic GA collapse
+to `m_min`. Using a fixed count of 50 decouples `mean_gap` from `m`:
+
+```
+mean_gap ≈ profile_len / 50 ≈ 118 samples   (for n = 6000, any m)
+```
+
+The CV then purely reflects whether those 50 positions recur periodically.
+
+**Physical interpretation:**
+At the true defect window size, bearing fault impulses repeat at the defect
+frequency → gaps cluster tightly → low CV → high regularity.
+At wrong window sizes, the top-50 positions are scattered → high CV → low score.
+
+### Why count_score was removed from the composite
+
+An earlier variant included a Motif Count Validity signal:
 
 ```
 threshold  = mp_min + 0.10 × (mean_mp − mp_min)
@@ -285,18 +306,11 @@ discovered = count of MP[i] < threshold
 score      = max(0, 1 − |discovered − k| / k)
 ```
 
-Penalises configurations that find far too many or far too few motifs.
-`k = min_motif_count` from the individual encoding.
-
-### Composite Fitness
-
-```
-F = 0.50 × contrast + 0.30 × entropy + 0.20 × count_score
-```
-
-Weights reflect the relative importance of each signal. Contrast is given the
-highest weight because it is the most directly interpretable; entropy guards
-against degenerate solutions; count score provides fine-grained tuning.
+This signal is **gameable**: the GA can always achieve `count_score = 1.0` by
+tuning the `k` gene to match `discovered`, regardless of window size. In
+practice it dominated the composite and caused the GA to optimise `k` rather
+than `m`. The signal is still computed and logged for ablation studies but
+excluded from the composite fitness.
 
 ---
 

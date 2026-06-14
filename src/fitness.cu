@@ -1,14 +1,13 @@
 // =============================================================================
-//  fitness.cu -- Unsupervised composite fitness for GA individuals
+//  fitness.cu  --  Unsupervised composite fitness for GA-STOMP individuals
 //
 //  All computation is CPU-side; it receives the host-side MP array from
-//  run_stomp and derives three independent quality signals.
+//  run_stomp and derives two independent quality signals.
 //
-//  Design rationale:
-//    Without labels, we cannot use classification accuracy.  Instead we
-//    proxy "motif quality" with three signals that are theoretically
-//    motivated and empirically correlated with ground-truth motif recall
-//    in synthetic benchmarks (see README SValidation).
+//  Composite:
+//    F = 0.35 × contrast + 0.65 × regularity
+//
+//  See fitness.cuh for full design rationale.
 // =============================================================================
 
 #include "fitness.cuh"
@@ -18,143 +17,148 @@
 #include <vector>
 #include <numeric>
 
-// -----------------------------------------------------------------------------
+// =============================================================================
 //  Signal 1 -- Motif Contrast
-// -----------------------------------------------------------------------------
-//  contrast = (d_second - d_top) / mean(MP)
+// =============================================================================
+//  Measures how far the best motif stands out from the background:
 //
-//  d_top    = MP minimum (best motif pair distance)
-//  d_second = MP value at position k (the min_motif_count-th smallest value)
-//             -- a proxy for the "background" distance level
+//    contrast = (d_second − d_top) / mean(MP)
+//    score    = 1 − exp(−contrast)          ← soft clamp to [0, 1]
 //
-//  High contrast -> top motif is far below background -> genuinely distinctive.
-//  Low contrast  -> many near-trivial matches -> m likely too small.
+//  d_top    = MP minimum  (best motif pair distance)
+//  d_second = k-th smallest MP value  (proxy for background distance level)
+//
+//  High contrast → top motif is far below background → genuinely distinctive.
+//  Low contrast  → many near-trivial matches → window likely too small.
+// =============================================================================
 static float compute_contrast(
     const std::vector<float> &sorted_mp,
-    int profile_len,
-    int min_motif_count)
+    int   profile_len,
+    int   min_motif_count)
 {
-    float d_top = sorted_mp[0];
-    int second_k = std::min(min_motif_count, profile_len - 1);
+    float d_top    = sorted_mp[0];
+    int   second_k = std::min(min_motif_count, profile_len - 1);
     float d_second = sorted_mp[second_k];
 
-    // Mean MP value
     float mean_mp = 0.0f;
     for (float v : sorted_mp)
         mean_mp += v;
     mean_mp /= (float)sorted_mp.size();
 
     float contrast = (d_second - d_top) / (mean_mp + EPS);
-
-    // Normalise to [0, 1] with a soft saturation at contrast = 2.0
-    return 1.0f - expf(-contrast);
+    return 1.0f - expf(-contrast);   // soft normalisation to [0, 1]
 }
 
-// -----------------------------------------------------------------------------
-//  Signal 2 -- Motif Count Validity
-// -----------------------------------------------------------------------------
-//  Count subsequences whose MP distance is within a relative threshold of
-//  the global minimum, then penalise the distance from the target k.
+// =============================================================================
+//  Signal 2 -- Spacing Regularity  (fixed-count selection)
+// =============================================================================
+//  Selects the FIXED_COUNT lowest-MP positions (most repetitive subsequences)
+//  and measures the Coefficient of Variation (CV) of the gaps between them.
 //
-//  threshold = mp_min + 0.1 * (mean_mp - mp_min)
-//  score = 1 - |discovered - k| / (k + EPS)
+//  Key design choice: FIXED COUNT, not a percentage.
+//    A percentage threshold (e.g. top 5%) selects profile_len/20 positions
+//    regardless of window size, giving mean_gap ≈ 20 for every m.  This makes
+//    the CV signal window-size-blind and causes systematic collapse to m_min.
 //
-//  Rewards individuals where the threshold selects approximately k motifs.
-static float compute_count_score(
-    const float *mp,
-    int profile_len,
-    float mp_min, float mean_mp,
-    int min_motif_count,
-    int &discovered_out)
-{
-    float threshold = mp_min + 0.10f * (mean_mp - mp_min + EPS);
-    int discovered = 0;
-    for (int i = 0; i < profile_len; i++)
-    {
-        if (mp[i] < threshold)
-            discovered++;
-    }
-    discovered_out = discovered;
-
-    float diff = fabsf((float)discovered - (float)min_motif_count);
-    float score = 1.0f - diff / ((float)min_motif_count + EPS);
-    return fmaxf(0.0f, score);
-}
-
-// -----------------------------------------------------------------------------
-//  Signal 3 & 4 -- Spacing Regularity & Consistency (Approach 6)
-// -----------------------------------------------------------------------------
-// Finds the top 5% of motifs and measures the coefficient of variation (CV)
-// of the gaps between them. Penalizes irregular spacing and penalizes gaps
-// that do not match the proposed window size `w`.
-static void compute_spacing_metrics(
-    const float *mp,
+//    Using FIXED_COUNT = 50 decouples mean_gap from m:
+//      mean_gap ≈ profile_len / 50  ≈  118 samples  (for n=6000, any m)
+//    The CV then purely reflects whether those 50 positions recur periodically.
+//
+//  Physical interpretation:
+//    At the true defect window size, bearing fault impulses repeat at the
+//    defect frequency → gaps cluster tightly → low CV → high regularity.
+//    At wrong window sizes, the top-50 positions are scattered → high CV.
+//
+//  regularity = 1 / (1 + CV)   ∈ (0, 1]
+// =============================================================================
+static void compute_spacing_regularity(
+    const float              *mp,
     const std::vector<float> &sorted_mp,
-    int profile_len,
-    int w,
-    float &regularity_out,
-    float &consistency_out)
+    int                       profile_len,
+    float                    &regularity_out)
 {
-    // 5th percentile threshold
-    float threshold = sorted_mp[profile_len / 20];
+    // Minimum positions needed for a meaningful CV estimate
+    const int FIXED_COUNT = 50;
+
+    if (profile_len < FIXED_COUNT * 2)
+    {
+        regularity_out = 0.0f;
+        return;
+    }
+
+    // Select the FIXED_COUNT lowest-MP positions
+    float threshold = sorted_mp[std::min(FIXED_COUNT, profile_len - 1)];
 
     std::vector<int> motif_idx;
+    motif_idx.reserve(FIXED_COUNT + 16);  // slight overalloc for tie-breaking
     for (int i = 0; i < profile_len; i++)
     {
         if (mp[i] <= threshold)
             motif_idx.push_back(i);
     }
 
-    if (motif_idx.size() < 4)
+    if ((int)motif_idx.size() < 4)
     {
         regularity_out = 0.0f;
-        consistency_out = 0.0f;
         return;
     }
 
-    // Compute gaps between consecutive motif occurrences
+    // Compute gaps between consecutive selected positions
     std::vector<float> gaps;
+    gaps.reserve(motif_idx.size() - 1);
     for (size_t i = 1; i < motif_idx.size(); i++)
-    {
         gaps.push_back((float)(motif_idx[i] - motif_idx[i - 1]));
-    }
 
+    // Mean gap
     float mean_gap = 0.0f;
     for (float g : gaps)
         mean_gap += g;
-    mean_gap /= gaps.size();
+    mean_gap /= (float)gaps.size();
 
+    // Standard deviation of gaps
     float var = 0.0f;
     for (float g : gaps)
         var += (g - mean_gap) * (g - mean_gap);
-    float std_gap = sqrtf(var / gaps.size());
+    float std_gap = sqrtf(var / (float)gaps.size());
 
-    // Regularity: penalize high coefficient of variation
+    // CV → regularity in [0, 1]
     float cv = std_gap / (mean_gap + EPS);
     regularity_out = 1.0f / (1.0f + cv);
-    // Consistency: mean gap must fall in physically plausible range
-    // For bearing data at 12kHz, defect periods are 40-300 samples
-    // (corresponds to ~40Hz-300Hz fault frequencies)
-    // Gaps below 30 = trivial dense matches from small windows
-    // Gaps above 400 = too sparse, probably not a real periodic fault
-    const float GAP_LO = 50.0f;
-    const float GAP_HI = 400.0f;
-    if (mean_gap < GAP_LO)
-        regularity_out *= (mean_gap / GAP_LO);
-    if (mean_gap < GAP_LO)
-        consistency_out = mean_gap / GAP_LO; // linear penalty: 0 at gap=0, 1 at gap=30
-    else if (mean_gap > GAP_HI)
-        consistency_out = GAP_HI / mean_gap; // linear penalty: 1 at gap=400, 0 as gap→∞
-    else
-        consistency_out = 1.0f; // full reward in plausible range
 }
 
-// -----------------------------------------------------------------------------
-//  Main fitness evaluator
-// -----------------------------------------------------------------------------
-FitnessScore evaluate_fitness(
+// =============================================================================
+//  Legacy helper -- Motif Count Score  (not used in composite)
+// =============================================================================
+//  Kept for logging and ablation studies.  Removed from composite because
+//  it is gameable: the GA can always match discovered == k by tuning k,
+//  earning count_score = 1.0 for any window size.
+// =============================================================================
+static float compute_count_score(
     const float *mp,
-    int profile_len,
+    int          profile_len,
+    float        mp_min,
+    float        mean_mp,
+    int          min_motif_count,
+    int         &discovered_out)
+{
+    float threshold  = mp_min + 0.10f * (mean_mp - mp_min + EPS);
+    int   discovered = 0;
+    for (int i = 0; i < profile_len; i++)
+        if (mp[i] < threshold)
+            discovered++;
+    discovered_out = discovered;
+
+    float diff  = fabsf((float)discovered - (float)min_motif_count);
+    float score = 1.0f - diff / ((float)min_motif_count + EPS);
+    return fmaxf(0.0f, score);
+}
+
+// =============================================================================
+//  Main fitness evaluator
+// =============================================================================
+FitnessScore evaluate_fitness(
+    const float      *mp,
+    int               profile_len,
     const Individual &ind)
 {
     FitnessScore fs{};
@@ -172,38 +176,46 @@ FitnessScore evaluate_fitness(
     float mp_min = sorted_mp.front();
     float mp_max = sorted_mp.back();
 
-    // Mean (needed by multiple signals)
-    float mean_mp = 0.0f;
-    for (int i = 0; i < profile_len; i++)
-        mean_mp += mp[i];
-    mean_mp /= (float)profile_len;
-
-    // Degenerate guard: if all values are INF or identical, skip
+    // Guard: degenerate profile (all INF or all identical)
     if (mp_max < EPS || (mp_max - mp_min) < EPS)
     {
         fs.composite = 0.0f;
         return fs;
     }
 
-    // -- Compute Signals ---------------------------------------------------------
+    // Mean MP value (needed by contrast and count_score)
+    float mean_mp = 0.0f;
+    for (int i = 0; i < profile_len; i++)
+        mean_mp += mp[i];
+    mean_mp /= (float)profile_len;
+
+    // --- Compute signals -------------------------------------------------------
+
     fs.contrast = compute_contrast(sorted_mp, profile_len, ind.min_motif_count);
-    fs.count_score = compute_count_score(mp, profile_len, mp_min, mean_mp, ind.min_motif_count, fs.discovered_motifs);
 
-    // NEW: Calculate Spacing Metrics
-    compute_spacing_metrics(mp, sorted_mp, profile_len, ind.window_size, fs.spacing_regularity, fs.spacing_consistency);
+    compute_spacing_regularity(mp, sorted_mp, profile_len, fs.spacing_regularity);
 
-    float w = (float)ind.window_size;
-    float size_prior = 1.0f / (1.0f + expf(-(w - 40.0f) / 10.0f)); // sigmoid centered at 40
-    fs.composite *= size_prior;
+    // Legacy: count_score for logging / ablation only
+    fs.count_score = compute_count_score(
+        mp, profile_len, mp_min, mean_mp,
+        ind.min_motif_count, fs.discovered_motifs);
+    fs.spacing_consistency = fs.spacing_regularity;  // alias for display
 
-    // -- Composite weighted sum (v6 Formulation) -------------------------------
-    fs.composite = 0.40f * fs.contrast + 0.35f * fs.spacing_regularity + 0.25f * fs.spacing_consistency;
+    // --- Composite fitness -----------------------------------------------------
+    //
+    //   F = 0.35 × contrast + 0.65 × regularity
+    //
+    //   contrast   (0.35): ensures the GA does not ignore motif quality entirely.
+    //   regularity (0.65): dominant signal; measures periodic recurrence of the
+    //                      top-50 most-repetitive positions in the MP.
+    //
+    fs.composite = 0.35f * fs.contrast + 0.65f * fs.spacing_regularity;
     return fs;
 }
 
-// -----------------------------------------------------------------------------
+// =============================================================================
 //  Logging helper
-// -----------------------------------------------------------------------------
+// =============================================================================
 void print_fitness(const Individual &ind, const FitnessScore &fs)
 {
     printf("  Individual: m=%-4d  ez=%.2f  k=%-3d  "

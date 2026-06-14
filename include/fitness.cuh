@@ -1,21 +1,28 @@
 #pragma once
 // =============================================================================
-//  fitness.cuh -- Unsupervised composite fitness for GA individuals
+//  fitness.cuh  --  Unsupervised composite fitness for GA-STOMP individuals
 //
-//  +----------------------+--------------------------------------------------+
-//  |  Signal              |  Intuition                                       |
-//  +----------------------+--------------------------------------------------+
-//  |  Contrast  (w=0.40)  |  Gap between top motif and background.           |
-//  |                      |  High gap -> motif is genuinely distinctive.     |
-//  +----------------------+--------------------------------------------------+
-//  |  Regularity(w=0.30)  |  Coefficient of Variation of motif gaps.         |
-//  |                      |  High regularity -> motifs appear periodically.  |
-//  +----------------------+--------------------------------------------------+
-//  |  Consistency(w=0.20) |  Difference between mean motif gap and `m`.      |
-//  |                      |  Ensures window size matches the discovered gap. |
-//  +----------------------+--------------------------------------------------+
-//  |  Count     (w=0.10)  |  Closeness of discovered motifs to target k.     |
-//  +----------------------+--------------------------------------------------+
+//  Two signals combined as a weighted sum:
+//
+//  +---------------------+----------------------------------------------------+
+//  |  Signal             |  Intuition                                         |
+//  +---------------------+----------------------------------------------------+
+//  |  Contrast  (w=0.35) |  Gap between top-motif distance and background.    |
+//  |                     |  High gap → motif is genuinely distinctive.        |
+//  +---------------------+----------------------------------------------------+
+//  |  Regularity(w=0.65) |  Coefficient of Variation of gaps between the      |
+//  |                     |  FIXED_COUNT lowest-MP positions.                  |
+//  |                     |  Low CV → motifs recur at a consistent period      |
+//  |                     |  → window aligns with the true defect frequency.   |
+//  +---------------------+----------------------------------------------------+
+//
+//  Design rationale for fixed-count selection:
+//    A percentage-based threshold (e.g. top 5 %) always selects
+//    profile_len/20 positions, giving mean_gap ≈ 20 regardless of window
+//    size.  This makes the regularity signal window-size-blind and creates
+//    a systematic bias toward small windows.  Using a fixed count of 50
+//    decouples mean_gap from window size (mean_gap ≈ profile_len/50 ≈ 118),
+//    so the CV of gaps purely measures periodic recurrence quality.
 // =============================================================================
 
 #include "common.cuh"
@@ -23,25 +30,25 @@
 
 struct Individual
 {
-    int window_size;     // m  in [m_min, m_max]
-    float ez_factor;     // in [0.25, 1.0]
-    int min_motif_count; // k  in [2, 20]
-    float fitness;       // set by evaluate_fitness; -INF before evaluation
+    int   window_size;      // m  ∈ [m_min, m_max]
+    float ez_factor;        // exclusion zone ∈ [0.25, 1.0]
+    int   min_motif_count;  // k  ∈ [2, 20]
+    float fitness;          // set by evaluate_fitness; -INF before evaluation
 };
 
 struct FitnessScore
 {
-    float composite;           // final weighted score in [0, 1]
-    float contrast;            // signal 1
-    float count_score;         // signal 2
-    int discovered_motifs;     // how many motifs were found below threshold
-    float spacing_regularity;  // NEW: Approach 6 regularity
-    float spacing_consistency; // NEW: Approach 6 self-consistency
+    float composite;           // final weighted score ∈ [0, 1]
+    float contrast;            // Signal 1: motif distinctiveness
+    float spacing_regularity;  // Signal 2: periodic recurrence of top-N motifs
+    float count_score;         // legacy field (computed but not used in composite)
+    int   discovered_motifs;   // number of subsequences below count threshold
+    float spacing_consistency; // legacy field (mirrors regularity for logging)
 };
 
 FitnessScore evaluate_fitness(
     const float *mp,
-    int profile_len,
+    int          profile_len,
     const Individual &ind);
 
 void print_fitness(const Individual &ind, const FitnessScore &fs);
