@@ -192,6 +192,10 @@ FitnessScore evaluate_fitness(
     // NEW: Calculate Spacing Metrics
     compute_spacing_metrics(mp, sorted_mp, profile_len, ind.window_size, fs.spacing_regularity, fs.spacing_consistency);
 
+    float w = (float)ind.window_size;
+    float size_prior = 1.0f / (1.0f + expf(-(w - 40.0f) / 10.0f)); // sigmoid centered at 40
+    fs.composite *= size_prior;
+
     // -- Composite weighted sum (v6 Formulation) -------------------------------
     fs.composite = 0.40f * fs.contrast + 0.35f * fs.spacing_regularity + 0.25f * fs.spacing_consistency;
     return fs;
