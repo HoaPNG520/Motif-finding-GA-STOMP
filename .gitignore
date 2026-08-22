@@ -1,7 +1,9 @@
 *.csv
 data/
 *exe
-sample_config.ini
+.gitignore
 results/
 *.txt
 results/
+AGENTS.md
+HANDOFF.md
