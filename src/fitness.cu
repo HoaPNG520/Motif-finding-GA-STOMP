@@ -50,10 +50,13 @@ static float compute_contrast(
 }
 
 // =============================================================================
-//  Signal 2 -- Spacing Regularity  (fixed-count selection)
+//  Signal 2 -- Spacing Regularity  (fixed-count selection, non-overlapping gaps)
 // =============================================================================
 //  Selects the FIXED_COUNT lowest-MP positions (most repetitive subsequences)
-//  and measures the Coefficient of Variation (CV) of the gaps between them.
+//  and measures the Coefficient of Variation (CV) of the NON-OVERLAPPING gaps
+//  between them. A gap is only counted if it is >= window_size (w), ensuring
+//  that adjacent selected positions belonging to the same motif instance do not
+//  inflate regularity.
 //
 //  Key design choice: FIXED COUNT, not a percentage.
 //    A percentage threshold (e.g. top 5%) selects profile_len/20 positions
@@ -75,6 +78,7 @@ static void compute_spacing_regularity(
     const float              *mp,
     const std::vector<float> &sorted_mp,
     int                       profile_len,
+    int                       w,              // window size (for non-overlapping gap filter)
     float                    &regularity_out)
 {
     // Minimum positions needed for a meaningful CV estimate
@@ -103,11 +107,27 @@ static void compute_spacing_regularity(
         return;
     }
 
-    // Compute gaps between consecutive selected positions
+    // Compute NON-OVERLAPPING gaps between selected positions
+    // Only count a gap if it is >= window_size (w), i.e. the two positions
+    // belong to different motif instances, not the same one.
     std::vector<float> gaps;
-    gaps.reserve(motif_idx.size() - 1);
+    int last = motif_idx[0];
     for (size_t i = 1; i < motif_idx.size(); i++)
-        gaps.push_back((float)(motif_idx[i] - motif_idx[i - 1]));
+    {
+        int gap = motif_idx[i] - last;
+        if (gap >= w)
+        {
+            gaps.push_back((float)gap);
+            last = motif_idx[i];
+        }
+    }
+
+    // Require at least 4 non-overlapping gaps for a meaningful CV
+    if ((int)gaps.size() < 4)
+    {
+        regularity_out = 0.0f;
+        return;
+    }
 
     // Mean gap
     float mean_gap = 0.0f;
@@ -193,7 +213,7 @@ FitnessScore evaluate_fitness(
 
     fs.contrast = compute_contrast(sorted_mp, profile_len, ind.min_motif_count);
 
-    compute_spacing_regularity(mp, sorted_mp, profile_len, fs.spacing_regularity);
+    compute_spacing_regularity(mp, sorted_mp, profile_len, ind.window_size, fs.spacing_regularity);
 
     // Legacy: count_score for logging / ablation only
     fs.count_score = compute_count_score(

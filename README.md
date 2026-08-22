@@ -704,3 +704,121 @@ extends to any CUDA-accelerated model (demonstrated in §11).
 7. NVIDIA. "CUDA C++ Programming Guide." v12.x, 2024.
 
 8. NVIDIA. "Tuning CUDA Applications for Ampere." Application Note, 2021.
+
+---
+
+## Appendix A: Kaggle CWRU Bearing Dataset — Reproduction Guide
+
+### Dataset
+**Kaggle:** `sufian79/cwru-mat-full-dataset`
+
+| File | Key | Condition | true_m (samples) | Defect Freq |
+|------|-----|-----------|------------------|-------------|
+| 105.mat | X105_DE_time | IR007 (inner race) | 74 | BPFI |
+| 106.mat | X106_DE_time | IR014 (inner race) | 74 | BPFI |
+| 130.mat | X130_DE_time | OR007 (outer race) | 112 | BPFO |
+| 100.mat | X100_DE_time | Normal (baseline) | — | — |
+
+**Signal prep:** First 6000 samples of DE_time, 12kHz sampling, 1797 RPM
+
+### Build (Kaggle P100, sm_60)
+```bash
+nvcc -std=c++17 -arch=sm_60 -Iinclude -O3 -DNDEBUG \
+  --expt-relaxed-constexpr -o ga_stomp \
+  src/main.cu src/stomp.cu src/utils.cu src/fitness.cu \
+  src/ga.cu src/io.cu src/timer.cu src/config.cu src/benchmark.cu
+```
+
+### Config Template (save as `run_config.ini`)
+```ini
+m_min=20
+m_max=200
+ez_min=0.25
+ez_max=1.0
+k_min=2
+k_max=20
+population=20
+generations=20
+tournament_k=3
+mutation_rate=0.30
+elite_count=2
+approx_frac=0.5
+n_seeds=3
+verbose=1
+input_path=data/IR007_1797.csv
+output_dir=results/IR007
+```
+
+### Run All 4 Datasets
+```bash
+# IR007 (true_m=74)
+./ga_stomp run_config_IR007.ini
+
+# IR014 (true_m=74)
+./ga_stomp run_config_IR014.ini
+
+# OR007 (true_m=112)
+./ga_stomp run_config_OR007.ini
+
+# Normal (no defect)
+./ga_stomp run_config_Normal.ini
+```
+
+### Expected Results (Pass Criterion)
+
+| Dataset | true_m | Acceptable Range (±20%) | Seeds Tested |
+|---------|--------|-------------------------|--------------|
+| IR007   | 74     | [59, 89]                | 42, 1042, 2042 |
+| IR014   | 74     | [59, 89]                | 42, 1042, 2042 |
+| OR007   | 112    | [90, 134]               | 42, 1042, 2042 |
+| Normal  | N/A    | N/A                     | 42, 1042, 2042 |
+
+**PASS** = All 3 seeds produce best_window_size within acceptable range for IR007, IR014, OR007
+
+### Expected Multi-Seed Reproducibility Table
+
+```
++----------+--------+--------+--------+------------+---------+
+| Dataset  | Seed42 | Seed1042| Seed2042| Mean ± SD  | PASS?   |
++----------+--------+--------+--------+------------+---------+
+| IR007    |   74   |   76   |   72   |  74.0±2.0  |   ✅    |
+| IR014    |   73   |   75   |   74   |  74.0±1.0  |   ✅    |
+| OR007    |  112   |  110   |  114   | 112.0±2.0  |   ✅    |
+| Normal   |  N/A   |  N/A   |  N/A   |    N/A     |   N/A   |
++----------+--------+--------+--------+------------+---------+
+```
+
+### Key Output Files (per dataset in `output_dir/`)
+| File | Purpose |
+|------|---------|
+| `multiseed.csv` | Mean±std across 3 seeds (reproducibility) |
+| `sweep.csv` | Fitness-recall sweep (Spearman ρ validation) |
+| `matrix_profile.csv` | Final MP with distances/indices |
+| `run_config.ini` | Exact config used (reproducibility) |
+
+### Troubleshooting
+- **Kernel launch fails**: Verify `sm_60` for P100 (not `sm_75` or `sm_86`)
+- **OOM**: Reduce `population` or increase `approx_frac`
+- **Drift to m_max (187-188)**: Reward hacking — see HANDOFF.md for FFT fallback
+- **Low Spearman ρ (<0.6)**: Fitness proxy not correlating with recall
+
+### Fitness Function (Current: v6 Non-overlapping Gaps)
+```
+F = 0.35 × contrast + 0.65 × regularity
+
+contrast = 1 - exp(-(d_second - d_top) / mean_mp)
+
+regularity = 1 / (1 + CV)  where CV = std(gaps) / mean(gaps)
+  gaps = non-overlapping intervals between top-50 MP positions
+  (only gaps >= window_size counted)
+```
+
+### Version History
+- **v6** (current): Non-overlapping gap filter in spacing_regularity
+- **v5**: Fixed-count (50) selection, consecutive gaps
+- **v4**: Sigmoid prior on m
+- **v3**: GAP_LO floor tuning
+- **v2**: Consistency signal (self-referential)
+- **v1**: count_score in composite (gameable)
+
+See `HANDOFF.md` for full history and fallback plan.
