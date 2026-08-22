@@ -97,6 +97,7 @@ static FitnessScore evaluate_individual(
     const float *h_T,
     int n,
     float approx_frac,
+    int detected_period,  // FFT-detected period for reward signal
     TimingReport &timing)
 {
     STOMPConfig scfg;
@@ -118,7 +119,7 @@ static FitnessScore evaluate_individual(
     {
         WallTimer ft;
         ft.start();
-        fs = evaluate_fitness(res.mp, res.profile_len, ind);
+        fs = evaluate_fitness(res.mp, res.profile_len, ind, detected_period);
         timing.fitness_total_ms += ft.stop();
         free(res.mp);
         free(res.mpi);
@@ -148,6 +149,34 @@ GAResult run_ga(
            cfg.m_min, cfg.m_max, cfg.approx_frac);
     printf("+--------------------------------------------------------------+\n\n");
 
+    // =========================================================================
+    //  FFT Reference Period Detection (run once before GA)
+    // =========================================================================
+    int detected_period = -1;
+    {
+        printf("[fft] Computing reference MP at w_ref=30 for period detection...\n");
+        STOMPConfig ref_cfg;
+        ref_cfg.window_size = 30;
+        ref_cfg.ez_factor = 0.25f;
+        ref_cfg.min_motif_count = 2;
+        ref_cfg.approximate = true;
+        ref_cfg.approx_frac = 0.5f;
+        ref_cfg.recover_indices = false;
+
+        STOMPResult ref_res = run_stomp(h_T, n, ref_cfg);
+        if (ref_res.mp)
+        {
+            detected_period = detect_dominant_period(ref_res.mp, ref_res.profile_len, 30, 400);
+            printf("[fft] Detected dominant period: %d samples\n", detected_period);
+            free(ref_res.mp);
+            free(ref_res.mpi);
+        }
+        else
+        {
+            printf("[fft] Reference MP computation failed\n");
+        }
+    }
+
     // Initialise population
     std::vector<Individual> pop(cfg.population_size);
     for (int i = 0; i < cfg.population_size; i++)
@@ -168,7 +197,7 @@ GAResult run_ga(
         // Evaluate population
         std::vector<FitnessScore> scores(cfg.population_size);
         for (int i = 0; i < cfg.population_size; i++)
-            scores[i] = evaluate_individual(pop[i], h_T, n, cfg.approx_frac, timing);
+            scores[i] = evaluate_individual(pop[i], h_T, n, cfg.approx_frac, detected_period, timing);
 
         // Sort descending
         std::vector<int> idx(cfg.population_size);
@@ -212,7 +241,7 @@ GAResult run_ga(
     // Final evaluation with full STOMP + MPI recovery
     for (auto &ind : pop)
         if (ind.fitness < 0.0f)
-            evaluate_individual(ind, h_T, n, 1.0f, timing);
+            evaluate_individual(ind, h_T, n, 1.0f, detected_period, timing);
 
     std::sort(pop.begin(), pop.end(), [](const Individual &a, const Individual &b)
               { return a.fitness > b.fitness; });
@@ -229,7 +258,7 @@ GAResult run_ga(
     best_cfg.recover_indices = true; // fill MPI[] properly on final run
 
     STOMPResult best_res = run_stomp(h_T, n, best_cfg);
-    result.best_fitness = evaluate_fitness(best_res.mp, best_res.profile_len, pop[0]);
+    result.best_fitness = evaluate_fitness(best_res.mp, best_res.profile_len, pop[0], detected_period);
     free(best_res.mp);
     free(best_res.mpi);
 
@@ -248,6 +277,8 @@ GAResult run_ga(
            result.best_fitness.contrast);
     printf("|    -> Spacing Reg     : %.4f                              |\n",
            result.best_fitness.spacing_regularity);
+    printf("|    -> Period Reward   : %.4f                              |\n",
+           result.best_fitness.period_reward);
     printf("|    -> Spacing Consist : %.4f                              |\n",
            result.best_fitness.spacing_consistency);
     printf("|    -> Count score     : %.4f                              |\n",

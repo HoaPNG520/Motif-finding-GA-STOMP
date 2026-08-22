@@ -93,36 +93,25 @@ nsys profile --stat=true ./ga_stomp 4000 80 50 30
 
 ---
 
-## Kaggle CWRU Expected Results (v6 Non-overlapping Gap Fix)
+## Kaggle CWRU Status: v6 Fix FAILED — Implementing FFT Fallback
 
-### Datasets & Targets
-| Dataset | File | Condition | true_m | Acceptable (±20%) |
-|---------|------|-----------|--------|-------------------|
-| IR007   | 105.mat | Inner race | 74 | [59, 89] |
-| IR014   | 106.mat | Inner race | 74 | [59, 89] |
-| OR007   | 130.mat | Outer race | 112 | [90, 134] |
-| Normal  | 100.mat | Baseline | N/A | N/A |
+### Latest Run Results (v6 Non-overlapping Gap Fix)
+| Dataset | true_m | Seed 42 | Seed 1042 | Seed 2042 | Mean ± SD | PASS? |
+|---------|--------|---------|-----------|-----------|-----------|-------|
+| IR007   | 74     | 188     | 128       | 21        | 112.3±69.1 | ❌ |
+| IR014   | 74     | 187     | 23        | 23        | 77.7±77.3  | ❌ |
+| OR007   | 112    | 103     | 20        | 20        | 47.7±39.1  | ❌ |
+| Normal  | N/A    | 38      | 20        | 20        | 26.0±8.5   | N/A |
 
-### Pass Criterion
-✅ **PASS** = best_window_size within ±20% of true_m for **all 3 seeds** (42, 1042, 2042) on IR007, IR014, OR007
+**Root cause**: Reward hacking persists. Large `m` + large `ez_factor` forces exclusion-zone-spaced positions → artificially low CV (high regularity). Non-overlapping gap filter insufficient.
 
-### Expected Multi-Seed Output
-```
-+----------+--------+--------+--------+------------+---------+
-| Dataset  | Seed42 | Seed1042| Seed2042| Mean ± SD  | PASS?   |
-+----------+--------+--------+--------+------------+---------+
-| IR007    |   74   |   76   |   72   |  74.0±2.0  |   ✅    |
-| IR014    |   73   |   75   |   74   |  74.0±1.0  |   ✅    |
-| OR007    |  112   |  110   |  114   | 112.0±2.0  |   ✅    |
-| Normal   |  N/A   |  N/A   |  N/A   |    N/A     |   N/A   |
-+----------+--------+--------+--------+------------+---------+
-```
+### Next Step: FFT Reference-Period Approach (Active)
+**Implementation required** (3 files: `fitness.cuh`, `fitness.cu`, `ga.cu`):
+1. Compute MP once at fixed `w_ref=30` before GA (in `ga.cu`)
+2. FFT of `(mean_mp - mp)`, find dominant period in [30, 400] (in `fitness.cu`)
+3. Score candidate `m` with Gaussian reward centered on detected period (in `fitness.cu`)
+4. Pass detected period to GA via config/Individual
 
-### If Fix Fails (Reward Hacking Persists)
-**Fallback: FFT Reference-Period Approach** (3-file change: `fitness.cuh`, `fitness.cu`, `ga.cu`)
-- Compute MP once at fixed `w_ref=30` before GA
-- FFT of `(mean_mp - mp)`, find dominant period in [30, 400]
-- Score candidate `m` with Gaussian reward centered on detected period
-- Validated on synthetic: detects period=74 (IR007) and period=112 (OR007)
+**Validated on synthetic**: detects period=74 (IR007) and period=112 (OR007)
 
 See `HANDOFF.md` for full history and implementation details.

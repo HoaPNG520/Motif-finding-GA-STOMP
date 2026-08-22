@@ -2,10 +2,10 @@
 //  fitness.cu  --  Unsupervised composite fitness for GA-STOMP individuals
 //
 //  All computation is CPU-side; it receives the host-side MP array from
-//  run_stomp and derives two independent quality signals.
+//  run_stomp and derives three independent quality signals.
 //
 //  Composite:
-//    F = 0.35 × contrast + 0.65 × regularity
+//    F = 0.25 × contrast + 0.40 × regularity + 0.35 × period_reward
 //
 //  See fitness.cuh for full design rationale.
 // =============================================================================
@@ -16,6 +16,8 @@
 #include <algorithm>
 #include <vector>
 #include <numeric>
+#include <complex>
+#include <valarray>
 
 // =============================================================================
 //  Signal 1 -- Motif Contrast
@@ -174,12 +176,124 @@ static float compute_count_score(
 }
 
 // =============================================================================
+//  FFT-based Reference Period Detection
+// =============================================================================
+//  Computes the dominant periodicity in the Matrix Profile by:
+//  1. Computing (mean_mp - mp) to get a "motif strength" signal
+//  2. FFT of that signal to find the dominant frequency
+//  3. Converting to period in samples
+// =============================================================================
+
+// Cooley-Tukey FFT (in-place, iterative)
+static void fft(std::valarray<std::complex<float>> &x)
+{
+    const size_t N = x.size();
+    if (N <= 1) return;
+
+    // Bit-reversal permutation
+    for (size_t i = 1, j = 0; i < N; i++)
+    {
+        size_t bit = N >> 1;
+        for (; j & bit; bit >>= 1)
+            j ^= bit;
+        j ^= bit;
+        if (i < j)
+            std::swap(x[i], x[j]);
+    }
+
+    // Iterative FFT
+    for (size_t len = 2; len <= N; len <<= 1)
+    {
+        float ang = -2.0f * M_PI / (float)len;
+        std::complex<float> wlen(cosf(ang), sinf(ang));
+        for (size_t i = 0; i < N; i += len)
+        {
+            std::complex<float> w(1.0f, 0.0f);
+            for (size_t j = 0; j < len / 2; j++)
+            {
+                std::complex<float> u = x[i + j];
+                std::complex<float> v = x[i + j + len / 2] * w;
+                x[i + j] = u + v;
+                x[i + j + len / 2] = u - v;
+                w *= wlen;
+            }
+        }
+    }
+}
+
+// Detect dominant period from MP using FFT
+// Returns period in samples, or -1 if detection fails
+int detect_dominant_period(const float *mp, int profile_len, int min_period, int max_period)
+{
+    if (profile_len < 64 || mp == nullptr)
+        return -1;
+
+    // Compute mean MP
+    float mean_mp = 0.0f;
+    for (int i = 0; i < profile_len; i++)
+        mean_mp += mp[i];
+    mean_mp /= (float)profile_len;
+
+    // Create signal: mean_mp - mp (high values = strong motifs)
+    // Pad to next power of 2 for FFT
+    int N = 1;
+    while (N < profile_len)
+        N <<= 1;
+
+    std::valarray<std::complex<float>> signal(N);
+    for (int i = 0; i < profile_len; i++)
+        signal[i] = std::complex<float>(mean_mp - mp[i], 0.0f);
+    for (int i = profile_len; i < N; i++)
+        signal[i] = std::complex<float>(0.0f, 0.0f);
+
+    // FFT
+    fft(signal);
+
+    // Find peak in frequency domain (skip DC at index 0)
+    // Frequency resolution: fs / N, where fs = 1 sample per index
+    // Period = N / k for bin k
+    float max_mag = 0.0f;
+    int best_k = -1;
+
+    for (int k = 1; k < N / 2; k++)
+    {
+        float period = (float)N / (float)k;
+        if (period < min_period || period > max_period)
+            continue;
+
+        float mag = std::abs(signal[k]);
+        if (mag > max_mag)
+        {
+            max_mag = mag;
+            best_k = k;
+        }
+    }
+
+    if (best_k <= 0)
+        return -1;
+
+    int period = N / best_k;
+    return period;
+}
+
+// Gaussian reward centered on detected period
+float compute_period_reward(int window_size, int detected_period, float sigma)
+{
+    if (detected_period <= 0)
+        return 0.5f;  // neutral if no period detected
+
+    float diff = (float)window_size - (float)detected_period;
+    return expf(-0.5f * diff * diff / (sigma * sigma));
+}
+
+// =============================================================================
 //  Main fitness evaluator
 // =============================================================================
 FitnessScore evaluate_fitness(
     const float      *mp,
     int               profile_len,
-    const Individual &ind)
+    const Individual &ind,
+    int               detected_period)  // -1 = no period reward
 {
     FitnessScore fs{};
 
@@ -215,6 +329,18 @@ FitnessScore evaluate_fitness(
 
     compute_spacing_regularity(mp, sorted_mp, profile_len, ind.window_size, fs.spacing_regularity);
 
+    // Period reward (Signal 3)
+    if (detected_period > 0)
+    {
+        // Sigma = 15% of detected period (allows ±30% for ~95% of reward)
+        float sigma = 0.15f * (float)detected_period;
+        fs.period_reward = compute_period_reward(ind.window_size, detected_period, sigma);
+    }
+    else
+    {
+        fs.period_reward = 0.5f;  // neutral
+    }
+
     // Legacy: count_score for logging / ablation only
     fs.count_score = compute_count_score(
         mp, profile_len, mp_min, mean_mp,
@@ -223,13 +349,13 @@ FitnessScore evaluate_fitness(
 
     // --- Composite fitness -----------------------------------------------------
     //
-    //   F = 0.35 × contrast + 0.65 × regularity
+    //   F = 0.25 × contrast + 0.40 × regularity + 0.35 × period_reward
     //
-    //   contrast   (0.35): ensures the GA does not ignore motif quality entirely.
-    //   regularity (0.65): dominant signal; measures periodic recurrence of the
-    //                      top-50 most-repetitive positions in the MP.
+    //   contrast       (0.25): ensures the GA does not ignore motif quality entirely.
+    //   regularity     (0.40): measures periodic recurrence of the top-50 positions.
+    //   period_reward  (0.35): strongly guides toward FFT-detected defect frequency.
     //
-    fs.composite = 0.35f * fs.contrast + 0.65f * fs.spacing_regularity;
+    fs.composite = 0.25f * fs.contrast + 0.40f * fs.spacing_regularity + 0.35f * fs.period_reward;
     return fs;
 }
 
@@ -239,7 +365,7 @@ FitnessScore evaluate_fitness(
 void print_fitness(const Individual &ind, const FitnessScore &fs)
 {
     printf("  Individual: m=%-4d  ez=%.2f  k=%-3d  "
-           "| fit=%.4f  (contrast=%.3f  reg=%.3f  consist=%.3f)\n",
+           "| fit=%.4f  (contrast=%.3f  reg=%.3f  period=%.3f  consist=%.3f)\n",
            ind.window_size, ind.ez_factor, ind.min_motif_count,
-           fs.composite, fs.contrast, fs.spacing_regularity, fs.spacing_consistency);
+           fs.composite, fs.contrast, fs.spacing_regularity, fs.period_reward, fs.spacing_consistency);
 }
