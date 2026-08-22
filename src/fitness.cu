@@ -332,8 +332,8 @@ FitnessScore evaluate_fitness(
     // Period reward (Signal 3)
     if (detected_period > 0)
     {
-        // Sigma = 15% of detected period (allows ±30% for ~95% of reward)
-        float sigma = 0.15f * (float)detected_period;
+        // Sigma = 20% of detected period (allows ±40% for ~95% of reward)
+        float sigma = 0.20f * (float)detected_period;
         fs.period_reward = compute_period_reward(ind.window_size, detected_period, sigma);
     }
     else
@@ -349,13 +349,13 @@ FitnessScore evaluate_fitness(
 
     // --- Composite fitness -----------------------------------------------------
     //
-    //   F = 0.25 × contrast + 0.40 × regularity + 0.35 × period_reward
+    //   F = 0.20 × contrast + 0.30 × regularity + 0.50 × period_reward
     //
-    //   contrast       (0.25): ensures the GA does not ignore motif quality entirely.
-    //   regularity     (0.40): measures periodic recurrence of the top-50 positions.
-    //   period_reward  (0.35): strongly guides toward FFT-detected defect frequency.
+    //   contrast       (0.20): ensures the GA does not ignore motif quality entirely.
+    //   regularity     (0.30): measures periodic recurrence of the top-50 positions.
+    //   period_reward  (0.50): strongly guides toward FFT-detected defect frequency.
     //
-    fs.composite = 0.25f * fs.contrast + 0.40f * fs.spacing_regularity + 0.35f * fs.period_reward;
+    fs.composite = 0.20f * fs.contrast + 0.30f * fs.spacing_regularity + 0.50f * fs.period_reward;
     return fs;
 }
 

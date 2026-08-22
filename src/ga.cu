@@ -18,11 +18,27 @@
 // -----------------------------------------------------------------------------
 //  Random individual
 // -----------------------------------------------------------------------------
-Individual random_individual(const GAConfig &cfg, unsigned int seed)
+// -----------------------------------------------------------------------------
+//  Random individual (with optional period bias)
+// -----------------------------------------------------------------------------
+Individual random_individual(const GAConfig &cfg, unsigned int seed, int detected_period = -1)
 {
     srand(seed);
     Individual ind;
-    ind.window_size = cfg.m_min + rand() % (cfg.m_max - cfg.m_min + 1);
+    
+    if (detected_period > 0 && detected_period >= cfg.m_min && detected_period <= cfg.m_max)
+    {
+        // Bias window_size toward detected period using Gaussian distribution
+        // Sigma = 20% of range, clamped to bounds
+        float sigma = 0.20f * (float)(cfg.m_max - cfg.m_min);
+        float gaussian_val = gaussianRand() * sigma + (float)detected_period;
+        ind.window_size = clampVal((int)roundf(gaussian_val), cfg.m_min, cfg.m_max);
+    }
+    else
+    {
+        ind.window_size = cfg.m_min + rand() % (cfg.m_max - cfg.m_min + 1);
+    }
+    
     ind.ez_factor = cfg.ez_min +
                     (cfg.ez_max - cfg.ez_min) * ((float)rand() / (float)RAND_MAX);
     ind.min_motif_count = cfg.k_min + rand() % (cfg.k_max - cfg.k_min + 1);
@@ -151,36 +167,101 @@ GAResult run_ga(
 
     // =========================================================================
     //  FFT Reference Period Detection (run once before GA)
+    //  Uses multiple reference window sizes for robust period estimation
     // =========================================================================
     int detected_period = -1;
     {
-        printf("[fft] Computing reference MP at w_ref=30 for period detection...\n");
-        STOMPConfig ref_cfg;
-        ref_cfg.window_size = 30;
-        ref_cfg.ez_factor = 0.25f;
-        ref_cfg.min_motif_count = 2;
-        ref_cfg.approximate = true;
-        ref_cfg.approx_frac = 0.5f;
-        ref_cfg.recover_indices = false;
-
-        STOMPResult ref_res = run_stomp(h_T, n, ref_cfg);
-        if (ref_res.mp)
+        // Try multiple reference window sizes to get consensus period
+        const int ref_windows[] = {30, 40, 50};
+        const int n_refs = 3;
+        std::vector<int> detected_periods;
+        
+        for (int wi = 0; wi < n_refs; wi++)
         {
-            detected_period = detect_dominant_period(ref_res.mp, ref_res.profile_len, 30, 400);
-            printf("[fft] Detected dominant period: %d samples\n", detected_period);
-            free(ref_res.mp);
-            free(ref_res.mpi);
+            int w_ref = ref_windows[wi];
+            printf("[fft] Computing reference MP at w_ref=%d for period detection...\n", w_ref);
+            STOMPConfig ref_cfg;
+            ref_cfg.window_size = w_ref;
+            ref_cfg.ez_factor = 0.25f;
+            ref_cfg.min_motif_count = 2;
+            ref_cfg.approximate = true;
+            ref_cfg.approx_frac = 0.5f;
+            ref_cfg.recover_indices = false;
+
+            STOMPResult ref_res = run_stomp(h_T, n, ref_cfg);
+            if (ref_res.mp)
+            {
+                int period = detect_dominant_period(ref_res.mp, ref_res.profile_len, 30, 400);
+                if (period > 0)
+                {
+                    detected_periods.push_back(period);
+                    printf("[fft]   w_ref=%d -> detected period: %d samples\n", w_ref, period);
+                }
+                free(ref_res.mp);
+                free(ref_res.mpi);
+            }
+            else
+            {
+                printf("[fft]   w_ref=%d -> Reference MP computation failed\n", w_ref);
+            }
+        }
+        
+        // Take the most common period (mode) or median if no clear mode
+        if (!detected_periods.empty())
+        {
+            std::sort(detected_periods.begin(), detected_periods.end());
+            // Simple mode detection: find most frequent value
+            int mode = detected_periods[0];
+            int mode_count = 1;
+            int current = detected_periods[0];
+            int current_count = 1;
+            
+            for (size_t i = 1; i < detected_periods.size(); i++)
+            {
+                if (detected_periods[i] == current)
+                {
+                    current_count++;
+                }
+                else
+                {
+                    if (current_count > mode_count)
+                    {
+                        mode = current;
+                        mode_count = current_count;
+                    }
+                    current = detected_periods[i];
+                    current_count = 1;
+                }
+            }
+            if (current_count > mode_count)
+            {
+                mode = current;
+                mode_count = current_count;
+            }
+            
+            // If mode appears at least twice, use it; otherwise use median
+            if (mode_count >= 2)
+            {
+                detected_period = mode;
+            }
+            else
+            {
+                detected_period = detected_periods[detected_periods.size() / 2];
+            }
+            
+            printf("[fft] Consensus dominant period: %d samples (from %zu refs)\n", 
+                   detected_period, detected_periods.size());
         }
         else
         {
-            printf("[fft] Reference MP computation failed\n");
+            printf("[fft] All reference MP computations failed\n");
         }
     }
 
     // Initialise population
     std::vector<Individual> pop(cfg.population_size);
     for (int i = 0; i < cfg.population_size; i++)
-        pop[i] = random_individual(cfg, seed + (unsigned)i * 31337);
+        pop[i] = random_individual(cfg, seed + (unsigned)i * 31337, detected_period);
 
     GAResult result;
     result.fitness_history.reserve(cfg.generations);

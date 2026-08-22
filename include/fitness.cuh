@@ -7,15 +7,15 @@
 //  +---------------------+----------------------------------------------------+
 //  |  Signal             |  Intuition                                         |
 //  +---------------------+----------------------------------------------------+
-//  |  Contrast  (w=0.25) |  Gap between top-motif distance and background.    |
+//  |  Contrast  (w=0.20) |  Gap between top-motif distance and background.    |
 //  |                     |  High gap → motif is genuinely distinctive.        |
 //  +---------------------+----------------------------------------------------+
-//  |  Regularity(w=0.40) |  Coefficient of Variation of gaps between the      |
+//  |  Regularity(w=0.30) |  Coefficient of Variation of gaps between the      |
 //  |                     |  FIXED_COUNT lowest-MP positions.                  |
 //  |                     |  Low CV → motifs recur at a consistent period      |
 //  |                     |  → window aligns with the true defect frequency.   |
 //  +---------------------+----------------------------------------------------+
-//  |  Period Reward(w=0.35)| Gaussian reward centered on FFT-detected period.  |
+//  |  Period Reward(w=0.50)| Gaussian reward centered on FFT-detected period.  |
 //  |                     |  Strongly guides GA toward true defect frequency.  |
 //  +---------------------+----------------------------------------------------+
 //

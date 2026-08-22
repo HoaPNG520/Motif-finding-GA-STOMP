@@ -56,7 +56,7 @@ struct GAResult
 // -----------------------------------------------------------------------------
 //  GA operators
 // -----------------------------------------------------------------------------
-Individual random_individual(const GAConfig &cfg, unsigned int seed);
+Individual random_individual(const GAConfig Individual random_individual(const GAConfig &cfg, unsigned int seed);cfg, unsigned int seed, int detected_period = -1);
 
 Individual tournament_select(
     const std::vector<Individual> &pop,
