@@ -20,7 +20,13 @@ def make(d, period, n=800, synth=False):
     open(f"{d}/multiseed.csv","w").write("seed,best_m,best_ez,best_k,best_fitness,wall_ms\n"+"".join(f"{42+1000*i},{v},0.3,5,0.85,12000\n" for i,v in enumerate(ms))+f"MEAN,{ms.mean():.2f},0.3,,0.85,12000\nSTD,{ms.std():.2f},0,,0,0\n")
     open(f"{d}/timing.csv","w").write("metric,value_ms\ntotal_wall,15000\nstomp_total,11000\nprecompute_total,900\nfitness_total,2600\nga_overhead,40\nn_stomp_calls,400\navg_per_stomp,27.5\n")
     open(f"{d}/summary.csv","w").write("input,n,best_m,best_ez,best_k,fitness,contrast,regularity,period_reward,detected_period,band_min,band_max,sampling_rate,top_motif_idx,true_m,true_pos1,wall_ms\n"+f"{d},{n},{period},0.3,5,0.87,0.4,0.8,0.98,{period+2},40,240,12000,{mp.argmin()},{80 if synth else 0},{200 if synth else -1},15000\n")
+    mm=np.arange(20,201,5)
+    reg=np.clip(1-np.abs(mm-30)/60,0,1); con=0.2+0.1*np.sin(mm/20); per=np.exp(-0.5*((mm-period)/(0.2*period))**2)
+    comp=0.2*con+0.3*reg+0.5*per
+    open(f"{d}/landscape.csv","w").write(f"# detected_period = {period+2}\nm,composite,contrast,regularity,period_reward\n"+"".join(f"{a},{b:.4f},{c:.4f},{e:.4f},{g:.4f}\n" for a,b,c,e,g in zip(mm,comp,con,reg,per)))
     if synth:
         mm=np.arange(30,200,10); fit=np.exp(-((mm-80)/30)**2); rec=(abs(mm-80)<=20).astype(float)
         open(f"{d}/sweep.csv","w").write("# Spearman rho = 0.8123\nm,fitness,recall,top_dist,regularity,consistency,contrast\n"+"".join(f"{a},{b:.4f},{c:.1f},1,1,1,1\n" for a,b,c in zip(mm,fit,rec)))
 make(sys.argv[1]+"/IR007",74); make(sys.argv[1]+"/OR007",112); make(sys.argv[1]+"/synthetic",80,synth=True)
+for v, shift in [("full",0),("no_period",-40),("no_regularity",3),("no_contrast",1)]:
+    make(f"{sys.argv[1]}/ablation/{v}/IR007",max(20,74+shift)); make(f"{sys.argv[1]}/ablation/{v}/OR007",max(20,112+shift))

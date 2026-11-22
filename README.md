@@ -758,6 +758,15 @@ fault_freq_max_hz=300
 # Without sampling_rate, the band is given directly in samples:
 # period_min=30
 # period_max=400
+# Fitness weights (set one to 0 for an ablation). For "no period", also set
+# period_bias_init=0 so the initial population is not seeded at the FFT period.
+w_contrast=0.20
+w_regularity=0.30
+w_period=0.50
+period_bias_init=1
+# >0: after the GA, evaluate every signal for m = m_min, m_min+step, ... and
+# write landscape.csv
+landscape_step=5
 input_path=data/IR007_1797.csv
 output_dir=results/IR007
 ```
@@ -829,16 +838,22 @@ and keeps the FFT from locking onto shaft-rate or high-frequency resonance peaks
 ```
 F = 0.20 x contrast + 0.30 x regularity + 0.50 x period_reward
 
-contrast      = 1 - exp(-(d_second - d_top) / mean_mp)
-regularity    = 1 / (1 + CV),  CV = std(gaps) / mean(gaps)
-                gaps = non-overlapping intervals (>= m) between the top-50 MP positions
+contrast      = 1 - exp(-(d_k - d_top) / mean_mp)
+                d_k = distance of the k-th DISTINCT instance (>= m from the others)
+regularity    = clamp(1 - 4 * mean_i | g_i/g0 - max(1, round(g_i/g0)) |, 0, 1)
+                g_i = gaps between K distinct motif instances (non-maximum
+                      suppression at radius m, K = clamp(L/2m, 6, 30)),
+                g0  = median gap; 1 = periodic (skips allowed), 0 = random
 period_reward = exp(-0.5 * ((m - P) / (0.2 P))^2)
                 P = FFT consensus period of a reference MP (w_ref = 30, 40, 50),
                     searched inside the configured period band
 ```
 
 ### Version History
-- **v6** (current): FFT reference-period reward; period band configurable in Hz via sampling_rate
+- **v6.2** (current): regularity and contrast use distinct motif instances (the old
+  regularity returned 0 on all CWRU fault signals; old contrast was ~0.01 and pushed
+  k to k_max). Fitness weights configurable for ablations; landscape.csv.
+- **v6.1**: FFT reference-period reward; period band configurable in Hz via sampling_rate
 - **v6 (earlier)**: Non-overlapping gap filter in spacing_regularity
 - **v5**: Fixed-count (50) selection, consecutive gaps
 - **v4**: Sigmoid prior on m
@@ -859,6 +874,23 @@ See `HANDOFF.md` for full history and fallback plan.
 | `build` | every push and PR | compiles with nvcc 12.4 in a CUDA container (no GPU needed), runs `./ga_stomp --help` |
 | `python` | every push and PR | notebook cells parse, kernel staging works, `plot_results.py` runs on mock outputs |
 | `kaggle` | on demand | pushes `kaggle_run.ipynb` to a private Kaggle GPU notebook pinned to the commit, waits, downloads `results/`, uploads it as a workflow artifact, and fails if `RUN_STATUS.txt` reports a failure |
+
+Every Kaggle run is committed to the `results` branch as `runs/<UTC time>_<sha7>/`
+(the notebook's whole `results/` folder: CSVs, logs, figures), with a line appended
+to `INDEX.csv` and the folder name written to `LATEST`. Fetch it with
+`git fetch origin results && git checkout results`.
+
+The notebook runs four fitness variants on each signal:
+
+| Variant | Config change |
+|---------|---------------|
+| `full` | defaults (0.20 / 0.30 / 0.50) |
+| `no_period` | `w_period=0`, `period_bias_init=0` |
+| `no_regularity` | `w_regularity=0` |
+| `no_contrast` | `w_contrast=0` |
+
+`results/figures/ablation.csv` and `fig_ablation` compare the window each variant
+selects; each run's `fig_landscape` shows every signal against m.
 
 The `kaggle` job only runs when you start it from the Actions tab ("Run workflow")
 or when the pushed commit message contains `[kaggle]`, so ordinary pushes do not
@@ -884,6 +916,7 @@ Kaggle UI without the dataset attached, add a Kaggle secret named
 python plot_results.py results/IR007 results/IR014 results/OR007 results/Normal \
     --expected IR007=74 IR014=74 OR007=112 --out results/figures
 ```
-Per run: `fig_mp`, `fig_convergence`, `fig_multiseed`, `fig_timing`, and `fig_sweep`
-(synthetic only). Across runs: `fig_comparison` and `combined_summary.csv`
+Per run: `fig_mp`, `fig_convergence`, `fig_multiseed`, `fig_timing`, `fig_landscape`
+(needs `landscape_step`), and `fig_sweep` (synthetic only). Ablation layout:
+`python plot_results.py --ablation results --expected IR007=74 OR007=112`. Across runs: `fig_comparison` and `combined_summary.csv`
 (one row per dataset, for the results table).

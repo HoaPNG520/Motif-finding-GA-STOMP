@@ -13,10 +13,16 @@ For each result directory (the output_dir of one ga_stomp run) it writes
     <dir>/figures/fig_multiseed.{png,pdf}     best window size per seed vs FFT period
     <dir>/figures/fig_sweep.{png,pdf}         fitness and recall vs m (synthetic only)
     <dir>/figures/fig_timing.{png,pdf}        where the wall time went
+    <dir>/figures/fig_landscape.{png,pdf}     every fitness signal vs m (needs landscape.csv)
 
 With two or more directories it also writes, into --out (default: figures/)
     fig_comparison.{png,pdf}   GA window vs FFT period (vs expected) per dataset
     combined_summary.csv       one row per dataset, for the paper's results table
+
+Ablation mode
+    python plot_results.py --ablation results --expected IR007=74 OR007=112
+reads results/<variant>/<dataset>/summary.csv and writes results/figures/
+ablation.csv and fig_ablation.{png,pdf} (window chosen per dataset and variant).
 
 Every input file is optional; a figure whose CSV is missing is skipped.
 """
@@ -281,6 +287,129 @@ def fig_timing(d, out):
     save(fig, out, "fig_timing")
 
 
+def fig_landscape(d, out, expected):
+    rows, comments = read_csv(os.path.join(d, "landscape.csv"))
+    if not rows:
+        return
+    m = col(rows, "m", int)
+    period = None
+    for c in comments:
+        if c.startswith("detected_period"):
+            try:
+                period = int(c.split("=")[-1])
+            except ValueError:
+                pass
+    panels = [("composite", "composite"), ("contrast", "contrast"),
+              ("regularity", "regularity"), ("period_reward", "period reward")]
+    # Small multiples, one y-axis each; every signal is in [0, 1].
+    fig, axes = plt.subplots(len(panels), 1, figsize=(5.2, 5.6), sharex=True,
+                             gridspec_kw={"hspace": 0.35})
+    for ax, (key, label) in zip(axes, panels):
+        y = col(rows, key)
+        ax.plot(m, y, color=BLUE)
+        best = int(np.nanargmax(y))
+        ax.plot([m[best]], [y[best]], "o", ms=5, color=BLUE, mec="white", mew=1)
+        ax.annotate(f"max at m={m[best]}", (m[best], y[best]), xytext=(5, -2),
+                    textcoords="offset points", va="top", fontsize=7, color=INK2)
+        ax.set_title(label, loc="left", fontsize=8, pad=2)
+        lo, hi = np.nanmin(y), np.nanmax(y)
+        ax.set_ylim(min(0, lo), max(1.0, hi) * 1.08)
+        if period and period > 0:
+            ax.axvline(period, color=ORANGE, ls="--", lw=1.2)
+        if expected:
+            ax.axvline(expected, color=AQUA, ls=":", lw=1.5)
+    top = axes[0]
+    ytxt = top.get_ylim()[1]
+    if period and period > 0:
+        top.annotate(f"FFT {period}", (period, ytxt), xytext=(3, 2), textcoords="offset points",
+                     fontsize=7, color=INK2, annotation_clip=False)
+    if expected:
+        top.annotate(f"expected {expected}", (expected, ytxt), xytext=(3, 10),
+                     textcoords="offset points", fontsize=7, color=INK2, annotation_clip=False)
+    axes[-1].set_xlabel("window size m")
+    fig.suptitle(f"Fitness landscape -- {ds_name(d)}", x=0.02, ha="left", fontsize=10, y=0.99)
+    save(fig, out, "fig_landscape")
+
+
+# ---------------------------------------------------------------------------
+#  Ablation: root/<variant>/<dataset>/summary.csv
+# ---------------------------------------------------------------------------
+VARIANT_ORDER = ["full", "no_period", "no_regularity", "no_contrast"]
+
+
+def fig_ablation(root, expected_map):
+    variants = [v for v in sorted(os.listdir(root))
+                if os.path.isdir(os.path.join(root, v)) and v != "figures"]
+    variants.sort(key=lambda v: (VARIANT_ORDER.index(v) if v in VARIANT_ORDER else 99, v))
+    table = []
+    for v in variants:
+        for ds in sorted(os.listdir(os.path.join(root, v))):
+            d = os.path.join(root, v, ds)
+            s = load_summary(d) if os.path.isdir(d) else None
+            if not s:
+                continue
+            ms_rows, _ = read_csv(os.path.join(d, "multiseed.csv"))
+            stats = {r.get("seed"): r for r in ms_rows or []}
+            exp = expected_map.get(ds)
+            table.append({
+                "dataset": ds, "variant": v, "best_m": int(s["best_m"]),
+                "multiseed_mean_m": stats.get("MEAN", {}).get("best_m", ""),
+                "multiseed_std_m": stats.get("STD", {}).get("best_m", ""),
+                "detected_period": s["detected_period"],
+                "expected_m": exp if exp is not None else "",
+                "abs_error": abs(int(s["best_m"]) - exp) if exp is not None else "",
+                "fitness": s["fitness"], "contrast": s["contrast"],
+                "regularity": s["regularity"], "period_reward": s["period_reward"],
+                "w_contrast": s.get("w_contrast", ""), "w_regularity": s.get("w_regularity", ""),
+                "w_period": s.get("w_period", ""), "period_bias_init": s.get("period_bias_init", ""),
+            })
+    if not table:
+        print(f"[ablation] no <variant>/<dataset>/summary.csv under {root}")
+        return
+    out = os.path.join(root, "figures")
+    os.makedirs(out, exist_ok=True)
+    path = os.path.join(out, "ablation.csv")
+    with open(path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(table[0].keys()))
+        w.writeheader()
+        w.writerows(table)
+    print(f"  wrote {path}")
+
+    datasets = sorted({r["dataset"] for r in table},
+                      key=lambda x: (expected_map.get(x) is None, x))
+    palette = [BLUE, ORANGE, AQUA, YELLOW]
+    variants = [v for v in variants if any(r["variant"] == v for r in table)][:4]
+    k = len(variants)
+    width = 0.8 / k
+    x = np.arange(len(datasets))
+    fig, ax = plt.subplots(figsize=(max(5.0, 1.8 * len(datasets) + 1.5), 3.2))
+    for i, v in enumerate(variants):
+        vals = []
+        for ds in datasets:
+            r = next((r for r in table if r["dataset"] == ds and r["variant"] == v), None)
+            vals.append(r["best_m"] if r else np.nan)
+        xs = x - 0.4 + width * (i + 0.5)
+        ax.bar(xs, vals, width=width * 0.92, color=palette[i], label=v,
+               edgecolor="white", linewidth=1)
+        for xi, val in zip(xs, vals):
+            if np.isfinite(val):
+                ax.annotate(f"{val:.0f}", (xi, val), xytext=(0, 2), textcoords="offset points",
+                            ha="center", fontsize=7, color=INK2)
+    for xi, ds in zip(x, datasets):
+        e = expected_map.get(ds)
+        if e:
+            ax.plot([xi - 0.42, xi + 0.42], [e, e], color=INK, lw=1.2, ls="--")
+            ax.annotate(f"expected {e}", (xi + 0.42, e), xytext=(2, 0),
+                        textcoords="offset points", va="center", fontsize=7, color=INK2)
+    ax.set_xticks(x, datasets)
+    ax.grid(axis="x", visible=False)
+    ax.set_ylabel("selected window m (samples)")
+    ax.set_title("Ablation: window chosen with each fitness term removed", loc="left")
+    ax.legend(ncol=k, loc="upper left", bbox_to_anchor=(0, -0.12))
+    ax.margins(x=0.08)
+    save(fig, out, "fig_ablation")
+
+
 # ---------------------------------------------------------------------------
 #  Cross-dataset comparison
 # ---------------------------------------------------------------------------
@@ -363,7 +492,9 @@ def parse_expected(items):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("dirs", nargs="+", help="ga_stomp output directories")
+    ap.add_argument("dirs", nargs="*", help="ga_stomp output directories")
+    ap.add_argument("--ablation", metavar="ROOT",
+                    help="ROOT/<variant>/<dataset>/ layout: write ablation.csv + fig_ablation")
     ap.add_argument("--expected", nargs="*", metavar="NAME=M",
                     help="known window size per dataset (dir basename), e.g. OR007=112")
     ap.add_argument("--out", default="figures",
@@ -383,6 +514,14 @@ def main():
         fig_multiseed(d, fig_out, s, expected.get(ds_name(d)))
         fig_sweep(d, fig_out, s)
         fig_timing(d, fig_out)
+        fig_landscape(d, fig_out, expected.get(ds_name(d)))
+
+    if args.ablation:
+        print("[ablation]")
+        fig_ablation(args.ablation, expected)
+
+    if not args.dirs and not args.ablation:
+        ap.error("give result directories and/or --ablation ROOT")
 
     if len(args.dirs) >= 2:
         print("[comparison]")

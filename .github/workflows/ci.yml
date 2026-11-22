@@ -5,6 +5,8 @@
 #  python  -- every push / PR: smoke-test plot_results.py, notebook, kernel staging
 #  kaggle  -- on demand: push kaggle_run.ipynb to Kaggle (GPU), wait, download
 #             results, fail if RUN_STATUS.txt reports a failure.
+#             Each run is also committed to the `results` branch under
+#             runs/<UTC time>_<sha7>/, with one line appended to INDEX.csv.
 #             Triggers: "Run workflow" button (workflow_dispatch), or a push whose
 #             head commit message contains [kaggle].  Off by default so ordinary
 #             pushes don't burn the weekly Kaggle GPU quota.
@@ -17,7 +19,7 @@ name: ci
 
 on:
   push:
-    branches: ["**"]
+    branches-ignore: [results]
   pull_request:
   workflow_dispatch:
     inputs:
@@ -84,6 +86,9 @@ jobs:
             --expected IR007=74 OR007=112 synthetic=80 --out /tmp/mock/figures
           test -f /tmp/mock/figures/fig_comparison.png
           test -f /tmp/mock/synthetic/figures/fig_sweep.png
+          test -f /tmp/mock/IR007/figures/fig_landscape.png
+          python plot_results.py --ablation /tmp/mock/ablation --expected IR007=74 OR007=112
+          test -f /tmp/mock/ablation/figures/fig_ablation.png
 
   kaggle:
     needs: [build, python]
@@ -92,6 +97,8 @@ jobs:
       (github.event_name == 'push' && contains(github.event.head_commit.message, '[kaggle]'))
     runs-on: ubuntu-latest
     timeout-minutes: 150
+    permissions:
+      contents: write        # to push to the results branch
     env:
       KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
       KAGGLE_USERNAME: ${{ vars.KAGGLE_USERNAME }}
@@ -156,13 +163,9 @@ jobs:
       - name: Print results to log
         if: always() && steps.push.outcome == 'success'
         run: |
-          for f in $(find kaggle_output \( -name RUN_STATUS.txt -o -name combined_summary.csv \
-                       -o -name summary.csv -o -name multiseed.csv -o -name timing.csv \) | sort); do
+          for f in $(find kaggle_output \( -name RUN_STATUS.txt -o -name ablation.csv \
+                       -o -name combined_summary.csv \) | sort); do
             echo "===== $f"; cat "$f"; echo
-          done
-          for f in $(find kaggle_output -name stdout.log | sort); do
-            echo "===== $f (FFT + result lines)"
-            grep -E '^\[fft\]|Best |Composite fitness|-> ' "$f" || true
           done
 
       - uses: actions/upload-artifact@v4
@@ -172,6 +175,46 @@ jobs:
           path: kaggle_output
           if-no-files-found: warn
 
+      - name: Commit results to the results branch
+        if: always() && steps.push.outcome == 'success'
+        env:
+          SRC_REF: ${{ github.ref_name }}
+        run: |
+          src=kaggle_output/results
+          [ -d "$src" ] || { echo "no results to commit"; exit 0; }
+          run="$(date -u +%Y%m%d-%H%M)_${GITHUB_SHA::7}"
+          ok=OK; grep -q "=FAIL" "$src/RUN_STATUS.txt" 2>/dev/null && ok=FAIL
+          wt="$RUNNER_TEMP/results-branch"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin results > /dev/null; then
+            git fetch -q --depth=1 origin results
+            git worktree add -q "$wt" FETCH_HEAD
+          else
+            git worktree add -q --detach "$wt"
+            git -C "$wt" checkout -q --orphan results-new
+            git -C "$wt" rm -rfq .
+            printf '%s\n' "# GA-STOMP results" "" \
+              "Written by CI (.github/workflows/ci.yml, kaggle job). One folder per Kaggle run" \
+              "under runs/, newest listed last in INDEX.csv and named in LATEST." > "$wt/README.md"
+          fi
+          mkdir -p "$wt/runs/$run"
+          cp -r "$src"/. "$wt/runs/$run/"
+          [ -f "$wt/INDEX.csv" ] || echo "run,source_sha,source_ref,created_utc,status" > "$wt/INDEX.csv"
+          echo "$run,$GITHUB_SHA,$SRC_REF,$(date -u +%FT%TZ),$ok" >> "$wt/INDEX.csv"
+          echo "$run" > "$wt/LATEST"
+          git -C "$wt" add -A
+          git -C "$wt" commit -qm "results: $run ($ok) from $SRC_REF@${GITHUB_SHA::7}"
+          for attempt in 1 2 3; do
+            if git -C "$wt" push -q origin HEAD:refs/heads/results; then
+              echo "pushed runs/$run to results"; exit 0
+            fi
+            sleep 5
+            git -C "$wt" fetch -q --depth=1 origin results
+            git -C "$wt" rebase -q FETCH_HEAD || { echo "::warning::rebase conflict"; git -C "$wt" rebase --abort; }
+          done
+          echo "::error::could not push to results branch"; exit 1
+
       - name: Check RUN_STATUS and write summary
         run: |
           f=$(find kaggle_output -name RUN_STATUS.txt | head -1)
@@ -180,7 +223,8 @@ jobs:
             echo "## Kaggle run ($ACCELERATOR)"
             echo '```'; cat "$f"; echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          csv=$(find kaggle_output -name combined_summary.csv | head -1)
+          csv=$(find kaggle_output -name ablation.csv | head -1)
+          [ -n "$csv" ] || csv=$(find kaggle_output -name combined_summary.csv | head -1)
           if [ -n "$csv" ]; then
             python - "$csv" >> "$GITHUB_STEP_SUMMARY" <<'EOF'
           import csv, sys
