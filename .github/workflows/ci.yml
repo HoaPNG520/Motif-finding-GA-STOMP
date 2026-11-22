@@ -46,7 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     container: nvidia/cuda:12.4.1-devel-ubuntu22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Toolchain
         run: |
           apt-get update -qq
@@ -60,8 +60,8 @@ jobs:
   python:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - run: pip install -q numpy matplotlib
@@ -99,8 +99,8 @@ jobs:
       TIMEOUT_MIN: ${{ inputs.timeout_min || '90' }}
       SLUG: ga-stomp-cwru
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -108,7 +108,8 @@ jobs:
         run: |
           [ -n "$KAGGLE_API_TOKEN" ] || { echo "::error::secret KAGGLE_API_TOKEN is not set"; exit 1; }
           [ -n "$KAGGLE_USERNAME" ]  || { echo "::error::variable KAGGLE_USERNAME is not set"; exit 1; }
-          pip install -q kaggle
+          # kaggle 2.x imports six without declaring it as a dependency
+          pip install -q kaggle six
           kaggle --version
 
       - name: Stage kernel
@@ -151,6 +152,18 @@ jobs:
           mkdir -p kaggle_output
           kaggle kernels output "$KERNEL" -p kaggle_output -o || true
           find kaggle_output -maxdepth 3 | head -50
+
+      - name: Print results to log
+        if: always() && steps.push.outcome == 'success'
+        run: |
+          for f in $(find kaggle_output \( -name RUN_STATUS.txt -o -name combined_summary.csv \
+                       -o -name summary.csv -o -name multiseed.csv -o -name timing.csv \) | sort); do
+            echo "===== $f"; cat "$f"; echo
+          done
+          for f in $(find kaggle_output -name stdout.log | sort); do
+            echo "===== $f (FFT + result lines)"
+            grep -E '^\[fft\]|Best |Composite fitness|-> ' "$f" || true
+          done
 
       - uses: actions/upload-artifact@v4
         if: always() && steps.push.outcome == 'success'
