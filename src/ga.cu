@@ -373,14 +373,16 @@ GAResult run_ga(
 
     result.best_individual = pop[0];
 
-    // Final best run: full mode + recover indices
+    // Final best run in full (non-approximate) mode for the reported fitness.
+    // Indices are not recovered here: this MP is only scored and freed, and
+    // main.cu runs its own final STOMP with recover_indices for the CSV.
     STOMPConfig best_cfg;
     best_cfg.window_size = pop[0].window_size;
     best_cfg.ez_factor = pop[0].ez_factor;
     best_cfg.min_motif_count = pop[0].min_motif_count;
     best_cfg.approximate = false;
     best_cfg.approx_frac = 1.0f;
-    best_cfg.recover_indices = true; // fill MPI[] properly on final run
+    best_cfg.recover_indices = false;
 
     STOMPResult best_res = run_stomp(h_T, n, best_cfg);
     result.best_fitness = evaluate_fitness(best_res.mp, best_res.profile_len, pop[0],
