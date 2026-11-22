@@ -18,7 +18,11 @@
 //    approx_frac  = 1.0    # 1.0 = full STOMP; 0.3 = 30% diagonals (faster)
 //    n_seeds      = 5      # for multi-seed variance report
 //    verbose      = 1
-//    sampling_rate;   // default 12000
+//    sampling_rate     = 12000  # Hz, 0 = unknown
+//    fault_freq_min_hz = 50     # FFT search band in Hz (needs sampling_rate)
+//    fault_freq_max_hz = 300
+//    period_min   = 30     # fallback band in samples when Hz keys are unset
+//    period_max   = 400
 //  Missing keys fall back to GAConfig defaults.
 //  Unknown keys are ignored with a warning.
 // =============================================================================
@@ -33,7 +37,7 @@ struct FullConfig
     int n_seeds;          // number of random seeds for variance report
     char input_path[512]; // path to input CSV/bin (empty = synthetic)
     char output_dir[512]; // directory for output files
-    int sampling_rate;    // default 12000
+    // sampling_rate / fault band / period band live in ga (GAConfig)
 };
 
 // Default values

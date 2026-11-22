@@ -1,0 +1,184 @@
+# =============================================================================
+#  CI for GA-STOMP
+#
+#  build   -- every push / PR: compile with nvcc (no GPU needed), run --help
+#  python  -- every push / PR: smoke-test plot_results.py, notebook, kernel staging
+#  kaggle  -- on demand: push kaggle_run.ipynb to Kaggle (GPU), wait, download
+#             results, fail if RUN_STATUS.txt reports a failure.
+#             Triggers: "Run workflow" button (workflow_dispatch), or a push whose
+#             head commit message contains [kaggle].  Off by default so ordinary
+#             pushes don't burn the weekly Kaggle GPU quota.
+#
+#  Repo settings this workflow reads (Settings -> Secrets and variables -> Actions):
+#    secret   KAGGLE_API_TOKEN   token from kaggle.com/settings -> API
+#    variable KAGGLE_USERNAME    your Kaggle username (owner of the kernel)
+# =============================================================================
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      accelerator:
+        description: "Kaggle accelerator"
+        default: "NvidiaTeslaT4"
+        type: string
+      timeout_min:
+        description: "Minutes to wait for the Kaggle run"
+        default: "90"
+        type: string
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: nvidia/cuda:12.4.1-devel-ubuntu22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends make g++ > /dev/null
+          nvcc --version | tail -1
+      - name: Compile (sm_75, Kaggle T4)
+        run: make SM_ARCH=sm_75 -j4
+      - name: Binary starts
+        run: ./ga_stomp --help
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -q numpy matplotlib
+      - name: Notebook cells parse
+        run: |
+          python - <<'EOF'
+          import json, ast
+          nb = json.load(open("kaggle_run.ipynb"))
+          for i, c in enumerate(nb["cells"]):
+              if c["cell_type"] == "code":
+                  ast.parse("".join(c["source"]), f"cell {i}")
+          print("ok")
+          EOF
+      - name: Kernel staging
+        run: python kaggle/prepare_kernel.py --ref "$GITHUB_SHA" --user ci-check --out /tmp/kernel
+      - name: plot_results.py on mock outputs
+        run: |
+          python tests/make_mock_results.py /tmp/mock
+          python plot_results.py /tmp/mock/IR007 /tmp/mock/OR007 /tmp/mock/synthetic \
+            --expected IR007=74 OR007=112 synthetic=80 --out /tmp/mock/figures
+          test -f /tmp/mock/figures/fig_comparison.png
+          test -f /tmp/mock/synthetic/figures/fig_sweep.png
+
+  kaggle:
+    needs: [build, python]
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[kaggle]'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+      KAGGLE_USERNAME: ${{ vars.KAGGLE_USERNAME }}
+      ACCELERATOR: ${{ inputs.accelerator || 'NvidiaTeslaT4' }}
+      TIMEOUT_MIN: ${{ inputs.timeout_min || '90' }}
+      SLUG: ga-stomp-cwru
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check credentials
+        run: |
+          [ -n "$KAGGLE_API_TOKEN" ] || { echo "::error::secret KAGGLE_API_TOKEN is not set"; exit 1; }
+          [ -n "$KAGGLE_USERNAME" ]  || { echo "::error::variable KAGGLE_USERNAME is not set"; exit 1; }
+          pip install -q kaggle
+          kaggle --version
+
+      - name: Stage kernel
+        run: python kaggle/prepare_kernel.py --ref "$GITHUB_SHA" --user "$KAGGLE_USERNAME" --slug "$SLUG" --out build/kernel
+
+      - name: Push to Kaggle
+        id: push
+        run: |
+          kaggle kernels push -p build/kernel --accelerator "$ACCELERATOR" | tee push.log
+          grep -qi "error" push.log && { echo "::error::kaggle push failed"; exit 1; }
+          VERSION=$(grep -oiE 'version [0-9]+' push.log | grep -oE '[0-9]+' | head -1 || true)
+          if [ -n "$VERSION" ]; then
+            echo "kernel=$KAGGLE_USERNAME/$SLUG/$VERSION" >> "$GITHUB_OUTPUT"
+          else
+            echo "kernel=$KAGGLE_USERNAME/$SLUG" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Wait for the run
+        env:
+          KERNEL: ${{ steps.push.outputs.kernel }}
+        run: |
+          sleep 60
+          deadline=$(( $(date +%s) + TIMEOUT_MIN * 60 ))
+          while :; do
+            s=$(kaggle kernels status "$KERNEL" 2>&1 || true)
+            echo "$(date -u +%H:%M:%S)  $s"
+            if echo "$s" | grep -qi 'complete'; then break; fi
+            if echo "$s" | grep -qiE 'error|cancel'; then
+              echo "::error::Kaggle run ended: $s"; exit 1
+            fi
+            [ "$(date +%s)" -lt "$deadline" ] || { echo "::error::timed out after ${TIMEOUT_MIN} min"; exit 1; }
+            sleep 60
+          done
+
+      - name: Download results
+        if: always() && steps.push.outcome == 'success'
+        env:
+          KERNEL: ${{ steps.push.outputs.kernel }}
+        run: |
+          mkdir -p kaggle_output
+          kaggle kernels output "$KERNEL" -p kaggle_output -o || true
+          find kaggle_output -maxdepth 3 | head -50
+
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.push.outcome == 'success'
+        with:
+          name: kaggle-results-${{ github.sha }}
+          path: kaggle_output
+          if-no-files-found: warn
+
+      - name: Check RUN_STATUS and write summary
+        run: |
+          f=$(find kaggle_output -name RUN_STATUS.txt | head -1)
+          [ -n "$f" ] || { echo "::error::RUN_STATUS.txt missing from Kaggle output"; exit 1; }
+          {
+            echo "## Kaggle run ($ACCELERATOR)"
+            echo '```'; cat "$f"; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          csv=$(find kaggle_output -name combined_summary.csv | head -1)
+          if [ -n "$csv" ]; then
+            python - "$csv" >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          import csv, sys
+          rows = list(csv.reader(open(sys.argv[1])))
+          print("\n### Results\n")
+          print("| " + " | ".join(rows[0]) + " |")
+          print("|" + "---|" * len(rows[0]))
+          for r in rows[1:]:
+              print("| " + " | ".join(r) + " |")
+          EOF
+          fi
+          if grep -q "=FAIL" "$f"; then
+            echo "::error::one or more steps failed on Kaggle"; grep "=FAIL" "$f"; exit 1
+          fi

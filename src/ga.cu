@@ -16,12 +16,34 @@
 #include <numeric>
 
 // -----------------------------------------------------------------------------
-//  Random individual
+//  FFT period search band
 // -----------------------------------------------------------------------------
+void resolve_period_band(const GAConfig &cfg, int n, int *pmin, int *pmax)
+{
+    int lo = cfg.period_min;
+    int hi = cfg.period_max;
+
+    if (cfg.sampling_rate > 0 &&
+        cfg.fault_freq_min_hz > 0.0f &&
+        cfg.fault_freq_max_hz > cfg.fault_freq_min_hz)
+    {
+        // Higher frequency -> shorter period, so f_max gives the lower bound.
+        lo = (int)floorf((float)cfg.sampling_rate / cfg.fault_freq_max_hz);
+        hi = (int)ceilf ((float)cfg.sampling_rate / cfg.fault_freq_min_hz);
+    }
+
+    lo = std::max(lo, 2);
+    hi = std::min(hi, n / 2);
+    if (hi <= lo) hi = std::min(n / 2, lo + 1);
+
+    *pmin = lo;
+    *pmax = hi;
+}
+
 // -----------------------------------------------------------------------------
 //  Random individual (with optional period bias)
 // -----------------------------------------------------------------------------
-Individual random_individual(const GAConfig &cfg, unsigned int seed, int detected_period = -1)
+Individual random_individual(const GAConfig &cfg, unsigned int seed, int detected_period)
 {
     srand(seed);
     Individual ind;
@@ -170,6 +192,15 @@ GAResult run_ga(
     //  Uses multiple reference window sizes for robust period estimation
     // =========================================================================
     int detected_period = -1;
+    int band_min = 0, band_max = 0;
+    resolve_period_band(cfg, n, &band_min, &band_max);
+    if (cfg.sampling_rate > 0 && cfg.fault_freq_min_hz > 0.0f && cfg.fault_freq_max_hz > 0.0f)
+        printf("[fft] Search band: [%d, %d] samples  (fs=%d Hz, f=[%.1f, %.1f] Hz)\n",
+               band_min, band_max, cfg.sampling_rate,
+               cfg.fault_freq_min_hz, cfg.fault_freq_max_hz);
+    else
+        printf("[fft] Search band: [%d, %d] samples  (period_min/period_max)\n",
+               band_min, band_max);
     {
         // Try multiple reference window sizes to get consensus period
         const int ref_windows[] = {30, 40, 50};
@@ -191,7 +222,8 @@ GAResult run_ga(
             STOMPResult ref_res = run_stomp(h_T, n, ref_cfg);
             if (ref_res.mp)
             {
-                int period = detect_dominant_period(ref_res.mp, ref_res.profile_len, 30, 400);
+                int period = detect_dominant_period(ref_res.mp, ref_res.profile_len,
+                                                    band_min, band_max);
                 if (period > 0)
                 {
                     detected_periods.push_back(period);
@@ -265,6 +297,10 @@ GAResult run_ga(
 
     GAResult result;
     result.fitness_history.reserve(cfg.generations);
+    result.mean_fitness_history.reserve(cfg.generations);
+    result.detected_period = detected_period;
+    result.period_band_min = band_min;
+    result.period_band_max = band_max;
     TimingReport &timing = result.timing;
     timing = {};
 
@@ -288,6 +324,9 @@ GAResult run_ga(
 
         float best_fitness = pop[idx[0]].fitness;
         result.fitness_history.push_back(best_fitness);
+        float mean_fit = 0.0f;
+        for (const auto &ind : pop) mean_fit += ind.fitness;
+        result.mean_fitness_history.push_back(mean_fit / (float)cfg.population_size);
 
         if (cfg.verbose)
         {

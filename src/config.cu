@@ -94,6 +94,11 @@ bool load_config(const char* path, FullConfig* out)
         }
         else if (!strcmp(key, "n_seeds"))     out->n_seeds  = atoi(val);
         else if (!strcmp(key, "verbose"))     out->ga.verbose = (atoi(val) != 0);
+        else if (!strcmp(key, "sampling_rate"))     out->ga.sampling_rate     = atoi(val);
+        else if (!strcmp(key, "fault_freq_min_hz")) out->ga.fault_freq_min_hz = (float)atof(val);
+        else if (!strcmp(key, "fault_freq_max_hz")) out->ga.fault_freq_max_hz = (float)atof(val);
+        else if (!strcmp(key, "period_min"))        out->ga.period_min        = atoi(val);
+        else if (!strcmp(key, "period_max"))        out->ga.period_max        = atoi(val);
         else if (!strcmp(key, "input_path"))  strncpy(out->input_path,  val, 511);
         else if (!strcmp(key, "output_dir"))  strncpy(out->output_dir,  val, 511);
         else fprintf(stderr, "[config] Unknown key '%s' -- ignored\n", key);
@@ -126,6 +131,11 @@ void save_config(const char* path, const FullConfig& fc)
     fprintf(fp, "approx_frac   = %.3f\n",fc.approx_frac);
     fprintf(fp, "n_seeds       = %d\n",  fc.n_seeds);
     fprintf(fp, "verbose       = %d\n",  fc.ga.verbose ? 1 : 0);
+    fprintf(fp, "sampling_rate = %d\n",  fc.ga.sampling_rate);
+    fprintf(fp, "fault_freq_min_hz = %.3f\n", fc.ga.fault_freq_min_hz);
+    fprintf(fp, "fault_freq_max_hz = %.3f\n", fc.ga.fault_freq_max_hz);
+    fprintf(fp, "period_min    = %d\n",  fc.ga.period_min);
+    fprintf(fp, "period_max    = %d\n",  fc.ga.period_max);
     if (fc.input_path[0]) fprintf(fp, "input_path    = %s\n", fc.input_path);
     fprintf(fp, "output_dir    = %s\n",  fc.output_dir);
     fclose(fp);
@@ -150,6 +160,13 @@ void print_config(const FullConfig& fc)
     printf("|  elite_count    : %d\n", fc.ga.elite_count);
     printf("|  approx_frac    : %.3f\n", fc.approx_frac);
     printf("|  n_seeds        : %d\n", fc.n_seeds);
+    if (fc.ga.sampling_rate > 0 && fc.ga.fault_freq_min_hz > 0.0f && fc.ga.fault_freq_max_hz > 0.0f)
+        printf("|  period band    : fs=%d Hz, f=[%.1f, %.1f] Hz -> [%d, %d] samples\n",
+               fc.ga.sampling_rate, fc.ga.fault_freq_min_hz, fc.ga.fault_freq_max_hz,
+               (int)(fc.ga.sampling_rate / fc.ga.fault_freq_max_hz),
+               (int)(fc.ga.sampling_rate / fc.ga.fault_freq_min_hz));
+    else
+        printf("|  period band    : [%d, %d] samples\n", fc.ga.period_min, fc.ga.period_max);
     printf("|  input_path     : %s\n", fc.input_path[0] ? fc.input_path : "(synthetic)");
     printf("|  output_dir     : %s\n", fc.output_dir);
     printf("+--------------------------------------------------------------+\n\n");

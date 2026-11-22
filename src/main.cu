@@ -13,6 +13,8 @@
 //    timing.csv           -- kernel/GA/fitness timing breakdown
 //    multiseed.csv        -- multi-seed reproducibility results
 //    sweep.csv            -- fitness-recall sweep (Spearman correlation)
+//    convergence.csv      -- best and mean fitness per generation
+//    summary.csv          -- one row: best params, FFT period, top motif
 //    run_config.ini       -- exact config used (for reproducibility)
 // =============================================================================
 
@@ -32,6 +34,8 @@
 #include <vector>
 #include <algorithm>
 #include <numeric>
+#include <cerrno>
+#include <sys/stat.h>
 
 // -----------------------------------------------------------------------------
 //  Synthetic time series generator
@@ -148,6 +152,57 @@ static void out_path(char* buf, int bufsz,
 }
 
 // -----------------------------------------------------------------------------
+//  mkdir -p
+// -----------------------------------------------------------------------------
+static void make_dirs(const char* path)
+{
+    char buf[512];
+    strncpy(buf, path, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+    for (char* p = buf + 1; *p; p++) {
+        if (*p == '/') { *p = '\0'; mkdir(buf, 0755); *p = '/'; }
+    }
+    if (mkdir(buf, 0755) != 0 && errno != EEXIST)
+        fprintf(stderr, "[main] Cannot create output_dir '%s'\n", path);
+}
+
+// -----------------------------------------------------------------------------
+//  convergence.csv / summary.csv
+// -----------------------------------------------------------------------------
+static void save_convergence_csv(const char* path, const GAResult& r)
+{
+    FILE* fp = fopen(path, "w");
+    if (!fp) { fprintf(stderr, "[main] Cannot write '%s'\n", path); return; }
+    fprintf(fp, "generation,best_fitness,mean_fitness\n");
+    for (size_t g = 0; g < r.fitness_history.size(); g++) {
+        float mean = g < r.mean_fitness_history.size() ? r.mean_fitness_history[g] : 0.0f;
+        fprintf(fp, "%zu,%.6f,%.6f\n", g, r.fitness_history[g], mean);
+    }
+    fclose(fp);
+}
+
+static void save_summary_csv(const char* path, const FullConfig& fc,
+                             const GAResult& r, int n, int top_idx,
+                             int true_m, int true_pos1)
+{
+    FILE* fp = fopen(path, "w");
+    if (!fp) { fprintf(stderr, "[main] Cannot write '%s'\n", path); return; }
+    fprintf(fp, "input,n,best_m,best_ez,best_k,fitness,contrast,regularity,"
+                "period_reward,detected_period,band_min,band_max,sampling_rate,"
+                "top_motif_idx,true_m,true_pos1,wall_ms\n");
+    fprintf(fp, "%s,%d,%d,%.4f,%d,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%d,%d,%d,%.2f\n",
+            fc.input_path[0] ? fc.input_path : "synthetic", n,
+            r.best_individual.window_size, r.best_individual.ez_factor,
+            r.best_individual.min_motif_count,
+            r.best_fitness.composite, r.best_fitness.contrast,
+            r.best_fitness.spacing_regularity, r.best_fitness.period_reward,
+            r.detected_period, r.period_band_min, r.period_band_max,
+            fc.ga.sampling_rate, top_idx, true_m, true_pos1,
+            r.timing.total_wall_ms);
+    fclose(fp);
+}
+
+// -----------------------------------------------------------------------------
 //  Print help
 // -----------------------------------------------------------------------------
 static void print_help(const char* argv0)
@@ -164,6 +219,9 @@ static void print_help(const char* argv0)
     printf("  approx_frac=1.0   # <1.0 enables SCRIMP++ approximation\n");
     printf("  n_seeds=5         # for multi-seed reproducibility report\n");
     printf("  verbose=1\n");
+    printf("  sampling_rate=0   # Hz; with fault_freq_*_hz sets the FFT band\n");
+    printf("  fault_freq_min_hz=0  fault_freq_max_hz=0\n");
+    printf("  period_min=30  period_max=400   # band in samples (fallback)\n");
     printf("  input_path=       # blank = use synthetic series\n");
     printf("  output_dir=.      # directory for all output CSV files\n");
 }
@@ -242,6 +300,7 @@ int main(int argc, char** argv)
     }
 
     // -- Save a copy of the series for reference -------------------------------
+    make_dirs(fc.output_dir);
     char tmp_path[600];
     out_path(tmp_path, sizeof(tmp_path), fc.output_dir, "series.csv");
     save_series_csv(tmp_path, h_T, n_ts);
@@ -254,6 +313,9 @@ int main(int argc, char** argv)
     GAResult ga_result = run_ga(h_T, n_ts, fc.ga, /*seed=*/42);
 
     print_convergence(ga_result.fitness_history);
+
+    out_path(tmp_path, sizeof(tmp_path), fc.output_dir, "convergence.csv");
+    save_convergence_csv(tmp_path, ga_result);
 
     // -- Save timing -----------------------------------------------------------
     out_path(tmp_path, sizeof(tmp_path), fc.output_dir, "timing.csv");
@@ -290,6 +352,9 @@ int main(int argc, char** argv)
                abs(ga_result.best_individual.window_size - true_m));
     }
     printf("+--------------------------------------------------------------+\n\n");
+
+    out_path(tmp_path, sizeof(tmp_path), fc.output_dir, "summary.csv");
+    save_summary_csv(tmp_path, fc, ga_result, n_ts, top, true_m, true_pos1);
 
     // -- Multi-seed reproducibility report ------------------------------------
     printf("Running multi-seed reproducibility experiment (%d seeds)...\n",

@@ -39,6 +39,18 @@ struct GAConfig
     // to evaluate more individuals per second. Final run always uses 1.0.
     float approx_frac = 1.0f;
 
+    // FFT reference-period search band.
+    // Physical mode (preferred for real sensors): set sampling_rate (Hz) and
+    // the expected fault/event frequency band in Hz.  The band in samples is
+    //   [ sampling_rate / fault_freq_max_hz , sampling_rate / fault_freq_min_hz ]
+    // e.g. CWRU 12 kHz, BPFI 162 Hz -> 74 samples, BPFO 107 Hz -> 112 samples.
+    // Sample mode (fallback): period_min / period_max directly in samples.
+    int   sampling_rate     = 0;     // Hz; 0 = unknown
+    float fault_freq_min_hz = 0.0f;  // Hz; 0 = unset
+    float fault_freq_max_hz = 0.0f;  // Hz; 0 = unset
+    int   period_min        = 30;    // samples (fallback)
+    int   period_max        = 400;   // samples (fallback)
+
     bool verbose = true;
 };
 
@@ -50,13 +62,22 @@ struct GAResult
     Individual best_individual;
     FitnessScore best_fitness;
     std::vector<float> fitness_history; // best fitness per generation
+    std::vector<float> mean_fitness_history; // population mean per generation
+    int detected_period = -1;           // FFT consensus period (samples)
+    int period_band_min = -1;           // band actually searched (samples)
+    int period_band_max = -1;
     TimingReport timing;
 };
 
 // -----------------------------------------------------------------------------
 //  GA operators
 // -----------------------------------------------------------------------------
-Individual random_individual(const GAConfig Individual random_individual(const GAConfig &cfg, unsigned int seed);cfg, unsigned int seed, int detected_period = -1);
+Individual random_individual(const GAConfig &cfg, unsigned int seed, int detected_period = -1);
+
+// Resolve the FFT period search band [*pmin, *pmax] in samples.
+// Uses sampling_rate + fault_freq_{min,max}_hz when all three are set,
+// otherwise falls back to period_min / period_max.  Clamped to [2, n/2].
+void resolve_period_band(const GAConfig &cfg, int n, int *pmin, int *pmax);
 
 Individual tournament_select(
     const std::vector<Individual> &pop,
