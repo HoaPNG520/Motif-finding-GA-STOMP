@@ -64,8 +64,11 @@ $(BIN): $(OBJS)
 	@echo "  Run:   ./$@ --help"
 	@echo "---------------------------------------------------"
 
+# -MMD -MP: rebuild objects when an included header changes
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cu | $(OBJ_DIR)
-	$(NVCC) $(NVCC_FLAGS) -c -o $@ $<
+	$(NVCC) $(NVCC_FLAGS) -MMD -MP -c -o $@ $<
+
+-include $(OBJS:.o=.d)
 
 $(OBJ_DIR):
 	mkdir -p $(OBJ_DIR)

@@ -15,6 +15,7 @@
 //    sweep.csv            -- fitness-recall sweep (Spearman correlation)
 //    convergence.csv      -- best and mean fitness per generation
 //    summary.csv          -- one row: best params, FFT period, top motif
+//    landscape.csv        -- every fitness signal vs m (landscape_step > 0)
 //    run_config.ini       -- exact config used (for reproducibility)
 // =============================================================================
 
@@ -189,8 +190,9 @@ static void save_summary_csv(const char* path, const FullConfig& fc,
     if (!fp) { fprintf(stderr, "[main] Cannot write '%s'\n", path); return; }
     fprintf(fp, "input,n,best_m,best_ez,best_k,fitness,contrast,regularity,"
                 "period_reward,detected_period,band_min,band_max,sampling_rate,"
-                "top_motif_idx,true_m,true_pos1,wall_ms\n");
-    fprintf(fp, "%s,%d,%d,%.4f,%d,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%d,%d,%d,%.2f\n",
+                "top_motif_idx,true_m,true_pos1,wall_ms,"
+                "w_contrast,w_regularity,w_period,period_bias_init\n");
+    fprintf(fp, "%s,%d,%d,%.4f,%d,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%d,%d,%d,%.2f,%.3f,%.3f,%.3f,%d\n",
             fc.input_path[0] ? fc.input_path : "synthetic", n,
             r.best_individual.window_size, r.best_individual.ez_factor,
             r.best_individual.min_motif_count,
@@ -198,8 +200,45 @@ static void save_summary_csv(const char* path, const FullConfig& fc,
             r.best_fitness.spacing_regularity, r.best_fitness.period_reward,
             r.detected_period, r.period_band_min, r.period_band_max,
             fc.ga.sampling_rate, top_idx, true_m, true_pos1,
-            r.timing.total_wall_ms);
+            r.timing.total_wall_ms,
+            fc.ga.weights.contrast, fc.ga.weights.regularity, fc.ga.weights.period,
+            fc.ga.period_bias_init ? 1 : 0);
     fclose(fp);
+}
+
+// -----------------------------------------------------------------------------
+//  landscape.csv: every fitness signal for m = m_min, m_min+step, ..., m_max
+//  (ez and k fixed at the GA's best).  Shows which signal points where,
+//  independent of how well the GA searched.
+// -----------------------------------------------------------------------------
+static void save_landscape_csv(const char* path, const float* h_T, int n,
+                               const FullConfig& fc, const GAResult& r)
+{
+    FILE* fp = fopen(path, "w");
+    if (!fp) { fprintf(stderr, "[main] Cannot write '%s'\n", path); return; }
+    fprintf(fp, "# detected_period = %d\n", r.detected_period);
+    fprintf(fp, "m,composite,contrast,regularity,period_reward\n");
+    for (int m = fc.ga.m_min; m <= fc.ga.m_max; m += fc.landscape_step) {
+        STOMPConfig sc;
+        sc.window_size     = m;
+        sc.ez_factor       = r.best_individual.ez_factor;
+        sc.min_motif_count = r.best_individual.min_motif_count;
+        sc.approximate     = false;
+        sc.approx_frac     = 1.0f;
+        sc.recover_indices = false;
+        STOMPResult res = run_stomp(h_T, n, sc);
+        if (!res.mp) continue;
+        Individual ind = r.best_individual;
+        ind.window_size = m;
+        FitnessScore f = evaluate_fitness(res.mp, res.profile_len, ind,
+                                          r.detected_period, fc.ga.weights);
+        fprintf(fp, "%d,%.6f,%.6f,%.6f,%.6f\n", m, f.composite, f.contrast,
+                f.spacing_regularity, f.period_reward);
+        free(res.mp);
+        free(res.mpi);
+    }
+    fclose(fp);
+    printf("[main] Landscape (step %d) -> '%s'\n", fc.landscape_step, path);
 }
 
 // -----------------------------------------------------------------------------
@@ -222,6 +261,9 @@ static void print_help(const char* argv0)
     printf("  sampling_rate=0   # Hz; with fault_freq_*_hz sets the FFT band\n");
     printf("  fault_freq_min_hz=0  fault_freq_max_hz=0\n");
     printf("  period_min=30  period_max=400   # band in samples (fallback)\n");
+    printf("  w_contrast=0.20  w_regularity=0.30  w_period=0.50\n");
+    printf("  period_bias_init=1   # seed population around the FFT period\n");
+    printf("  landscape_step=0     # >0 writes landscape.csv\n");
     printf("  input_path=       # blank = use synthetic series\n");
     printf("  output_dir=.      # directory for all output CSV files\n");
 }
@@ -355,6 +397,11 @@ int main(int argc, char** argv)
 
     out_path(tmp_path, sizeof(tmp_path), fc.output_dir, "summary.csv");
     save_summary_csv(tmp_path, fc, ga_result, n_ts, top, true_m, true_pos1);
+
+    if (fc.landscape_step > 0) {
+        out_path(tmp_path, sizeof(tmp_path), fc.output_dir, "landscape.csv");
+        save_landscape_csv(tmp_path, h_T, n_ts, fc, ga_result);
+    }
 
     // -- Multi-seed reproducibility report ------------------------------------
     printf("Running multi-seed reproducibility experiment (%d seeds)...\n",

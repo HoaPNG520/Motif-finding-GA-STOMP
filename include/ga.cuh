@@ -51,6 +51,13 @@ struct GAConfig
     int   period_min        = 30;    // samples (fallback)
     int   period_max        = 400;   // samples (fallback)
 
+    // Fitness weights (ablations: set one to 0) and whether the initial
+    // population is seeded around the FFT period.  For a "no period" ablation
+    // set w_period = 0 AND period_bias_init = 0, otherwise the prior still
+    // leaks in through initialisation.
+    FitnessWeights weights;
+    bool  period_bias_init  = true;
+
     bool verbose = true;
 };
 

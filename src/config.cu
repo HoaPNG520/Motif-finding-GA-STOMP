@@ -43,6 +43,7 @@ FullConfig default_full_config()
     fc.input_path[0]      = '\0';
     fc.output_dir[0]      = '.';
     fc.output_dir[1]      = '\0';
+    fc.landscape_step     = 0;
     return fc;
 }
 
@@ -99,6 +100,11 @@ bool load_config(const char* path, FullConfig* out)
         else if (!strcmp(key, "fault_freq_max_hz")) out->ga.fault_freq_max_hz = (float)atof(val);
         else if (!strcmp(key, "period_min"))        out->ga.period_min        = atoi(val);
         else if (!strcmp(key, "period_max"))        out->ga.period_max        = atoi(val);
+        else if (!strcmp(key, "w_contrast"))        out->ga.weights.contrast   = (float)atof(val);
+        else if (!strcmp(key, "w_regularity"))      out->ga.weights.regularity = (float)atof(val);
+        else if (!strcmp(key, "w_period"))          out->ga.weights.period     = (float)atof(val);
+        else if (!strcmp(key, "period_bias_init"))  out->ga.period_bias_init   = (atoi(val) != 0);
+        else if (!strcmp(key, "landscape_step"))    out->landscape_step        = atoi(val);
         else if (!strcmp(key, "input_path"))  strncpy(out->input_path,  val, 511);
         else if (!strcmp(key, "output_dir"))  strncpy(out->output_dir,  val, 511);
         else fprintf(stderr, "[config] Unknown key '%s' -- ignored\n", key);
@@ -136,6 +142,11 @@ void save_config(const char* path, const FullConfig& fc)
     fprintf(fp, "fault_freq_max_hz = %.3f\n", fc.ga.fault_freq_max_hz);
     fprintf(fp, "period_min    = %d\n",  fc.ga.period_min);
     fprintf(fp, "period_max    = %d\n",  fc.ga.period_max);
+    fprintf(fp, "w_contrast    = %.3f\n", fc.ga.weights.contrast);
+    fprintf(fp, "w_regularity  = %.3f\n", fc.ga.weights.regularity);
+    fprintf(fp, "w_period      = %.3f\n", fc.ga.weights.period);
+    fprintf(fp, "period_bias_init = %d\n", fc.ga.period_bias_init ? 1 : 0);
+    fprintf(fp, "landscape_step = %d\n", fc.landscape_step);
     if (fc.input_path[0]) fprintf(fp, "input_path    = %s\n", fc.input_path);
     fprintf(fp, "output_dir    = %s\n",  fc.output_dir);
     fclose(fp);
@@ -167,6 +178,9 @@ void print_config(const FullConfig& fc)
                (int)(fc.ga.sampling_rate / fc.ga.fault_freq_min_hz));
     else
         printf("|  period band    : [%d, %d] samples\n", fc.ga.period_min, fc.ga.period_max);
+    printf("|  weights        : contrast %.2f  regularity %.2f  period %.2f  (biased init %s)\n",
+           fc.ga.weights.contrast, fc.ga.weights.regularity, fc.ga.weights.period,
+           fc.ga.period_bias_init ? "on" : "off");
     printf("|  input_path     : %s\n", fc.input_path[0] ? fc.input_path : "(synthetic)");
     printf("|  output_dir     : %s\n", fc.output_dir);
     printf("+--------------------------------------------------------------+\n\n");

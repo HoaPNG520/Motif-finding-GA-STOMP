@@ -20,132 +20,126 @@
 #include <valarray>
 
 // =============================================================================
-//  Signal 1 -- Motif Contrast
+//  Distinct motif instances (non-maximum suppression)
 // =============================================================================
-//  Measures how far the best motif stands out from the background:
-//
-//    contrast = (d_second − d_top) / mean(MP)
-//    score    = 1 − exp(−contrast)          ← soft clamp to [0, 1]
-//
-//  d_top    = MP minimum  (best motif pair distance)
-//  d_second = k-th smallest MP value  (proxy for background distance level)
-//
-//  High contrast → top motif is far below background → genuinely distinctive.
-//  Low contrast  → many near-trivial matches → window likely too small.
+//  Walks MP positions in ascending distance order and accepts a position only
+//  if it is at least `radius` samples from every position already accepted.
+//  Neighbouring subsequences of one motif occurrence have almost identical MP
+//  values, so without this step "the top-50 positions" or "the k-th smallest
+//  value" are mostly trivial neighbours of the single best match.
+//  Returns positions in acceptance (best-first) order.
 // =============================================================================
-static float compute_contrast(
-    const std::vector<float> &sorted_mp,
-    int   profile_len,
-    int   min_motif_count)
+static inline bool mp_valid(float v) { return std::isfinite(v) && v < 0.5f * INF_F; }
+
+static std::vector<int> pick_instances(const float *mp, int L, int radius, int max_count)
 {
-    float d_top    = sorted_mp[0];
-    int   second_k = std::min(min_motif_count, profile_len - 1);
-    float d_second = sorted_mp[second_k];
+    std::vector<int> order(L);
+    std::iota(order.begin(), order.end(), 0);
+    std::stable_sort(order.begin(), order.end(),
+                     [&](int a, int b) { return mp[a] < mp[b]; });
 
-    float mean_mp = 0.0f;
-    for (float v : sorted_mp)
-        mean_mp += v;
-    mean_mp /= (float)sorted_mp.size();
-
-    float contrast = (d_second - d_top) / (mean_mp + EPS);
-    return 1.0f - expf(-contrast);   // soft normalisation to [0, 1]
+    radius = std::max(radius, 1);
+    std::vector<char> blocked(L, 0);
+    std::vector<int>  out;
+    out.reserve(max_count);
+    for (int idx : order)
+    {
+        if (!mp_valid(mp[idx])) break;          // sorted: rest are INF too
+        if (blocked[idx]) continue;
+        out.push_back(idx);
+        int lo = std::max(0, idx - radius + 1);
+        int hi = std::min(L - 1, idx + radius - 1);
+        for (int j = lo; j <= hi; j++) blocked[j] = 1;
+        if ((int)out.size() >= max_count) break;
+    }
+    return out;
 }
 
 // =============================================================================
-//  Signal 2 -- Spacing Regularity  (fixed-count selection, non-overlapping gaps)
+//  Signal 1 -- Motif Contrast
 // =============================================================================
-//  Selects the FIXED_COUNT lowest-MP positions (most repetitive subsequences)
-//  and measures the Coefficient of Variation (CV) of the NON-OVERLAPPING gaps
-//  between them. A gap is only counted if it is >= window_size (w), ensuring
-//  that adjacent selected positions belonging to the same motif instance do not
-//  inflate regularity.
+//    contrast = (d_k - d_top) / mean(MP)        score = 1 - exp(-contrast)
 //
-//  Key design choice: FIXED COUNT, not a percentage.
-//    A percentage threshold (e.g. top 5%) selects profile_len/20 positions
-//    regardless of window size, giving mean_gap ≈ 20 for every m.  This makes
-//    the CV signal window-size-blind and causes systematic collapse to m_min.
+//  d_top = distance of the best motif instance
+//  d_k   = distance of the k-th DISTINCT instance (instances >= m apart),
+//          i.e. the background level k occurrences down.
 //
-//    Using FIXED_COUNT = 50 decouples mean_gap from m:
-//      mean_gap ≈ profile_len / 50  ≈  118 samples  (for n=6000, any m)
-//    The CV then purely reflects whether those 50 positions recur periodically.
+//  Before: d_k was the k-th smallest raw MP value, which is almost always a
+//  trivial neighbour of the top match, so contrast was ~0.01 on CWRU and the
+//  GA pushed k to k_max to squeeze out a larger gap.
+// =============================================================================
+static float compute_contrast(
+    const float *mp,
+    int          L,
+    int          w,
+    int          min_motif_count,
+    float        mean_mp)
+{
+    int k = std::max(1, min_motif_count);
+    std::vector<int> inst = pick_instances(mp, L, w, k + 1);
+    if ((int)inst.size() < 2) return 0.0f;
+
+    float d_top = mp[inst.front()];
+    float d_k   = mp[inst.back()];
+    float contrast = (d_k - d_top) / (mean_mp + EPS);
+    return 1.0f - expf(-fmaxf(contrast, 0.0f));
+}
+
+// =============================================================================
+//  Signal 2 -- Spacing Regularity  (distinct instances, harmonic fit)
+// =============================================================================
+//  1. Pick K distinct motif instances with non-maximum suppression at radius
+//     w (so every gap is >= w by construction):
+//        K = clamp(L / (2w), 6, 30)
+//  2. Gaps g_i between consecutive instances (sorted by position).
+//  3. Base spacing g0 = median gap.  Each gap should be close to an integer
+//     multiple of g0 (a skipped occurrence gives 2*g0, which is still regular):
+//        r_i = | g_i/g0 - max(1, round(g_i/g0)) |      r_i in [0, 0.5]
+//  4. regularity = clamp(1 - 4 * mean(r_i), 0, 1)
+//        perfectly periodic -> 1;  uniformly random spacing (E[r] = 0.25) -> 0
 //
-//  Physical interpretation:
-//    At the true defect window size, bearing fault impulses repeat at the
-//    defect frequency → gaps cluster tightly → low CV → high regularity.
-//    At wrong window sizes, the top-50 positions are scattered → high CV.
+//  Why the old version returned 0 on CWRU: it took the 50 lowest raw MP
+//  positions, which cluster around two or three occurrences, then kept only
+//  gaps >= w.  Fewer than 4 gaps survived, so it hit the early return.
 //
-//  regularity = 1 / (1 + CV)   ∈ (0, 1]
+//  Known limitation (also visible in landscape.csv): once w spans a full
+//  period every phase of the cycle matches equally well, so instance positions
+//  stop being phase-locked and regularity falls.  This signal therefore tends
+//  to favour windows around the length of one event, not the event period.
 // =============================================================================
 static void compute_spacing_regularity(
-    const float              *mp,
-    const std::vector<float> &sorted_mp,
-    int                       profile_len,
-    int                       w,              // window size (for non-overlapping gap filter)
-    float                    &regularity_out)
+    const float *mp,
+    int          L,
+    int          w,
+    float       &regularity_out)
 {
-    // Minimum positions needed for a meaningful CV estimate
-    const int FIXED_COUNT = 50;
+    regularity_out = 0.0f;
+    w = std::max(w, 1);
+    int K = std::min(30, std::max(6, L / (2 * w)));
+    std::vector<int> inst = pick_instances(mp, L, w, K);
+    if ((int)inst.size() < 6) return;
 
-    if (profile_len < FIXED_COUNT * 2)
-    {
-        regularity_out = 0.0f;
-        return;
-    }
-
-    // Select the FIXED_COUNT lowest-MP positions
-    float threshold = sorted_mp[std::min(FIXED_COUNT, profile_len - 1)];
-
-    std::vector<int> motif_idx;
-    motif_idx.reserve(FIXED_COUNT + 16);  // slight overalloc for tie-breaking
-    for (int i = 0; i < profile_len; i++)
-    {
-        if (mp[i] <= threshold)
-            motif_idx.push_back(i);
-    }
-
-    if ((int)motif_idx.size() < 4)
-    {
-        regularity_out = 0.0f;
-        return;
-    }
-
-    // Compute NON-OVERLAPPING gaps between selected positions
-    // Only count a gap if it is >= window_size (w), i.e. the two positions
-    // belong to different motif instances, not the same one.
+    std::sort(inst.begin(), inst.end());
     std::vector<float> gaps;
-    int last = motif_idx[0];
-    for (size_t i = 1; i < motif_idx.size(); i++)
-    {
-        int gap = motif_idx[i] - last;
-        if (gap >= w)
-        {
-            gaps.push_back((float)gap);
-            last = motif_idx[i];
-        }
-    }
+    gaps.reserve(inst.size() - 1);
+    for (size_t i = 1; i < inst.size(); i++)
+        gaps.push_back((float)(inst[i] - inst[i - 1]));
 
-    // Require at least 4 non-overlapping gaps for a meaningful CV
-    if ((int)gaps.size() < 4)
-    {
-        regularity_out = 0.0f;
-        return;
-    }
+    std::vector<float> tmp(gaps);
+    std::sort(tmp.begin(), tmp.end());
+    size_t h = tmp.size() / 2;
+    float g0 = (tmp.size() % 2) ? tmp[h] : 0.5f * (tmp[h - 1] + tmp[h]);
+    if (g0 < 1.0f) return;
 
-    // Mean gap
-    float mean_gap = 0.0f;
+    float r_sum = 0.0f;
     for (float g : gaps)
-        mean_gap += g;
-    mean_gap /= (float)gaps.size();
-
-    // Standard deviation of gaps
-    float var = 0.0f;
-    for (float g : gaps)
-        var += (g - mean_gap) * (g - mean_gap);
-    float std_gap = sqrtf(var / (float)gaps.size());
-
-    // CV → regularity in [0, 1]
-    float cv = std_gap / (mean_gap + EPS);
-    regularity_out = 1.0f / (1.0f + cv);
+    {
+        float q = g / g0;
+        float n = fmaxf(1.0f, roundf(q));
+        r_sum += fabsf(q - n);
+    }
+    float r_mean = r_sum / (float)gaps.size();
+    regularity_out = fminf(1.0f, fmaxf(0.0f, 1.0f - 4.0f * r_mean));
 }
 
 // =============================================================================
@@ -290,10 +284,11 @@ float compute_period_reward(int window_size, int detected_period, float sigma)
 //  Main fitness evaluator
 // =============================================================================
 FitnessScore evaluate_fitness(
-    const float      *mp,
-    int               profile_len,
-    const Individual &ind,
-    int               detected_period)  // -1 = no period reward
+    const float         *mp,
+    int                  profile_len,
+    const Individual    &ind,
+    int                  detected_period,   // -1 = no period reward
+    const FitnessWeights &w)
 {
     FitnessScore fs{};
 
@@ -303,59 +298,52 @@ FitnessScore evaluate_fitness(
         return fs;
     }
 
-    // Sort a copy of MP for rank-based statistics
-    std::vector<float> sorted_mp(mp, mp + profile_len);
-    std::sort(sorted_mp.begin(), sorted_mp.end());
-
-    float mp_min = sorted_mp.front();
-    float mp_max = sorted_mp.back();
-
-    // Guard: degenerate profile (all INF or all identical)
-    if (mp_max < EPS || (mp_max - mp_min) < EPS)
+    // Statistics over valid (non-INF) MP entries only; approximate mode can
+    // leave rows uncovered.
+    float mp_min = INF_F, mp_max = -INF_F, mean_mp = 0.0f;
+    int   n_valid = 0;
+    for (int i = 0; i < profile_len; i++)
     {
-        fs.composite = 0.0f;
+        if (!mp_valid(mp[i])) continue;
+        mp_min = fminf(mp_min, mp[i]);
+        mp_max = fmaxf(mp_max, mp[i]);
+        mean_mp += mp[i];
+        n_valid++;
+    }
+    if (n_valid < 2 || mp_max < EPS || (mp_max - mp_min) < EPS)
+    {
+        fs.composite = 0.0f;               // degenerate profile
         return fs;
     }
+    mean_mp /= (float)n_valid;
 
-    // Mean MP value (needed by contrast and count_score)
-    float mean_mp = 0.0f;
-    for (int i = 0; i < profile_len; i++)
-        mean_mp += mp[i];
-    mean_mp /= (float)profile_len;
+    // --- Signals -------------------------------------------------------------
+    fs.contrast = compute_contrast(mp, profile_len, ind.window_size,
+                                   ind.min_motif_count, mean_mp);
+    compute_spacing_regularity(mp, profile_len, ind.window_size, fs.spacing_regularity);
 
-    // --- Compute signals -------------------------------------------------------
-
-    fs.contrast = compute_contrast(sorted_mp, profile_len, ind.min_motif_count);
-
-    compute_spacing_regularity(mp, sorted_mp, profile_len, ind.window_size, fs.spacing_regularity);
-
-    // Period reward (Signal 3)
     if (detected_period > 0)
     {
-        // Sigma = 20% of detected period (allows ±40% for ~95% of reward)
-        float sigma = 0.20f * (float)detected_period;
+        float sigma = 0.20f * (float)detected_period;   // +-40% keeps ~95% of mass
         fs.period_reward = compute_period_reward(ind.window_size, detected_period, sigma);
     }
     else
     {
-        fs.period_reward = 0.5f;  // neutral
+        fs.period_reward = 0.5f;                         // neutral
     }
 
-    // Legacy: count_score for logging / ablation only
-    fs.count_score = compute_count_score(
-        mp, profile_len, mp_min, mean_mp,
-        ind.min_motif_count, fs.discovered_motifs);
-    fs.spacing_consistency = fs.spacing_regularity;  // alias for display
+    // Legacy: logged for ablation only, never in the composite
+    fs.count_score = compute_count_score(mp, profile_len, mp_min, mean_mp,
+                                         ind.min_motif_count, fs.discovered_motifs);
+    fs.spacing_consistency = fs.spacing_regularity;
 
-    // --- Composite fitness -----------------------------------------------------
-    //
-    //   F = 0.20 × contrast + 0.30 × regularity + 0.50 × period_reward
-    //
-    //   contrast       (0.20): ensures the GA does not ignore motif quality entirely.
-    //   regularity     (0.30): measures periodic recurrence of the top-50 positions.
-    //   period_reward  (0.50): strongly guides toward FFT-detected defect frequency.
-    //
-    fs.composite = 0.20f * fs.contrast + 0.30f * fs.spacing_regularity + 0.50f * fs.period_reward;
+    // --- Composite -------------------------------------------------------------
+    //   Defaults (FitnessWeights): 0.20 contrast + 0.30 regularity + 0.50 period.
+    //   Weights are configurable (w_contrast / w_regularity / w_period) for
+    //   ablations; they need not sum to 1 since the GA only ranks individuals.
+    fs.composite = w.contrast   * fs.contrast
+                 + w.regularity * fs.spacing_regularity
+                 + w.period     * fs.period_reward;
     return fs;
 }
 

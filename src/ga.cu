@@ -48,7 +48,8 @@ Individual random_individual(const GAConfig &cfg, unsigned int seed, int detecte
     srand(seed);
     Individual ind;
     
-    if (detected_period > 0 && detected_period >= cfg.m_min && detected_period <= cfg.m_max)
+    if (cfg.period_bias_init && detected_period > 0 &&
+        detected_period >= cfg.m_min && detected_period <= cfg.m_max)
     {
         // Bias window_size toward detected period using Gaussian distribution
         // Sigma = 20% of range, clamped to bounds
@@ -136,6 +137,7 @@ static FitnessScore evaluate_individual(
     int n,
     float approx_frac,
     int detected_period,  // FFT-detected period for reward signal
+    const FitnessWeights &weights,
     TimingReport &timing)
 {
     STOMPConfig scfg;
@@ -157,7 +159,7 @@ static FitnessScore evaluate_individual(
     {
         WallTimer ft;
         ft.start();
-        fs = evaluate_fitness(res.mp, res.profile_len, ind, detected_period);
+        fs = evaluate_fitness(res.mp, res.profile_len, ind, detected_period, weights);
         timing.fitness_total_ms += ft.stop();
         free(res.mp);
         free(res.mpi);
@@ -185,6 +187,9 @@ GAResult run_ga(
            cfg.population_size, cfg.generations);
     printf("|  m range        : [%d, %d]  | approx_frac: %.2f           |\n",
            cfg.m_min, cfg.m_max, cfg.approx_frac);
+    printf("|  weights        : contrast %.2f  regularity %.2f  period %.2f\n",
+           cfg.weights.contrast, cfg.weights.regularity, cfg.weights.period);
+    printf("|  FFT-biased init: %s\n", cfg.period_bias_init ? "on" : "off");
     printf("+--------------------------------------------------------------+\n\n");
 
     // =========================================================================
@@ -314,7 +319,7 @@ GAResult run_ga(
         // Evaluate population
         std::vector<FitnessScore> scores(cfg.population_size);
         for (int i = 0; i < cfg.population_size; i++)
-            scores[i] = evaluate_individual(pop[i], h_T, n, cfg.approx_frac, detected_period, timing);
+            scores[i] = evaluate_individual(pop[i], h_T, n, cfg.approx_frac, detected_period, cfg.weights, timing);
 
         // Sort descending
         std::vector<int> idx(cfg.population_size);
@@ -361,7 +366,7 @@ GAResult run_ga(
     // Final evaluation with full STOMP + MPI recovery
     for (auto &ind : pop)
         if (ind.fitness < 0.0f)
-            evaluate_individual(ind, h_T, n, 1.0f, detected_period, timing);
+            evaluate_individual(ind, h_T, n, 1.0f, detected_period, cfg.weights, timing);
 
     std::sort(pop.begin(), pop.end(), [](const Individual &a, const Individual &b)
               { return a.fitness > b.fitness; });
@@ -378,7 +383,8 @@ GAResult run_ga(
     best_cfg.recover_indices = true; // fill MPI[] properly on final run
 
     STOMPResult best_res = run_stomp(h_T, n, best_cfg);
-    result.best_fitness = evaluate_fitness(best_res.mp, best_res.profile_len, pop[0], detected_period);
+    result.best_fitness = evaluate_fitness(best_res.mp, best_res.profile_len, pop[0],
+                                           detected_period, cfg.weights);
     free(best_res.mp);
     free(best_res.mpi);
 
