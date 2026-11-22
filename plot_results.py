@@ -395,17 +395,18 @@ def fig_ablation(root, expected_map):
             if np.isfinite(val):
                 ax.annotate(f"{val:.0f}", (xi, val), xytext=(0, 2), textcoords="offset points",
                             ha="center", fontsize=7, color=INK2)
+    has_expected = False
     for xi, ds in zip(x, datasets):
         e = expected_map.get(ds)
         if e:
-            ax.plot([xi - 0.42, xi + 0.42], [e, e], color=INK, lw=1.2, ls="--")
-            ax.annotate(f"expected {e}", (xi + 0.42, e), xytext=(2, 0),
-                        textcoords="offset points", va="center", fontsize=7, color=INK2)
+            ax.plot([xi - 0.42, xi + 0.42], [e, e], color=INK, lw=1.2, ls="--",
+                    label=None if has_expected else "expected")
+            has_expected = True
     ax.set_xticks(x, datasets)
     ax.grid(axis="x", visible=False)
     ax.set_ylabel("selected window m (samples)")
     ax.set_title("Ablation: window chosen with each fitness term removed", loc="left")
-    ax.legend(ncol=k, loc="upper left", bbox_to_anchor=(0, -0.12))
+    ax.legend(ncol=k + has_expected, loc="upper left", bbox_to_anchor=(0, -0.12))
     ax.margins(x=0.08)
     save(fig, out, "fig_ablation")
 
