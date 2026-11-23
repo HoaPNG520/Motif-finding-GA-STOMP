@@ -13,6 +13,9 @@
 //    timing.csv           -- kernel/GA/fitness timing breakdown
 //    multiseed.csv        -- multi-seed reproducibility results
 //    sweep.csv            -- fitness-recall sweep (Spearman correlation)
+//    convergence.csv      -- best and mean fitness per generation
+//    summary.csv          -- one row: best params, FFT period, top motif
+//    landscape.csv        -- every fitness signal vs m (landscape_step > 0)
 //    run_config.ini       -- exact config used (for reproducibility)
 // =============================================================================
 
@@ -24,6 +27,7 @@
 #include "timer.cuh"
 #include "config.cuh"
 #include "benchmark.cuh"
+#include "surrogate.cuh"
 
 #include <cstdio>
 #include <cstdlib>
@@ -32,6 +36,8 @@
 #include <vector>
 #include <algorithm>
 #include <numeric>
+#include <cerrno>
+#include <sys/stat.h>
 
 // -----------------------------------------------------------------------------
 //  Synthetic time series generator
@@ -148,6 +154,111 @@ static void out_path(char* buf, int bufsz,
 }
 
 // -----------------------------------------------------------------------------
+//  mkdir -p
+// -----------------------------------------------------------------------------
+static void make_dirs(const char* path)
+{
+    char buf[512];
+    strncpy(buf, path, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+    for (char* p = buf + 1; *p; p++) {
+        if (*p == '/') { *p = '\0'; mkdir(buf, 0755); *p = '/'; }
+    }
+    if (mkdir(buf, 0755) != 0 && errno != EEXIST)
+        fprintf(stderr, "[main] Cannot create output_dir '%s'\n", path);
+}
+
+// -----------------------------------------------------------------------------
+//  convergence.csv / summary.csv
+// -----------------------------------------------------------------------------
+static void save_convergence_csv(const char* path, const GAResult& r)
+{
+    FILE* fp = fopen(path, "w");
+    if (!fp) { fprintf(stderr, "[main] Cannot write '%s'\n", path); return; }
+    fprintf(fp, "generation,best_fitness,mean_fitness\n");
+    for (size_t g = 0; g < r.fitness_history.size(); g++) {
+        float mean = g < r.mean_fitness_history.size() ? r.mean_fitness_history[g] : 0.0f;
+        fprintf(fp, "%zu,%.6f,%.6f\n", g, r.fitness_history[g], mean);
+    }
+    fclose(fp);
+}
+
+static void save_summary_csv(const char* path, const FullConfig& fc,
+                             const GAResult& r, int n, int top_idx,
+                             int true_m, int true_pos1)
+{
+    FILE* fp = fopen(path, "w");
+    if (!fp) { fprintf(stderr, "[main] Cannot write '%s'\n", path); return; }
+    fprintf(fp, "input,n,best_m,best_ez,best_k,fitness,contrast,regularity,"
+                "period_reward,detected_period,band_min,band_max,sampling_rate,"
+                "top_motif_idx,true_m,true_pos1,wall_ms,"
+                "w_contrast,w_regularity,w_period,period_bias_init,"
+                "null,contrast_raw,contrast_null\n");
+    fprintf(fp, "%s,%d,%d,%.4f,%d,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%d,%d,%d,%.2f,%.3f,%.3f,%.3f,%d,"
+                "%s,%.6f,%.6f\n",
+            fc.input_path[0] ? fc.input_path : "synthetic", n,
+            r.best_individual.window_size, r.best_individual.ez_factor,
+            r.best_individual.min_motif_count,
+            r.best_fitness.composite, r.best_fitness.contrast,
+            r.best_fitness.spacing_regularity, r.best_fitness.period_reward,
+            r.detected_period, r.period_band_min, r.period_band_max,
+            fc.ga.sampling_rate, top_idx, true_m, true_pos1,
+            r.timing.total_wall_ms,
+            fc.ga.weights.contrast, fc.ga.weights.regularity, fc.ga.weights.period,
+            fc.ga.period_bias_init ? 1 : 0,
+            fc.ga.null_correct ? surrogate_kind_name(fc.ga.null_kind) : "off",
+            r.best_fitness.contrast_raw, r.best_fitness.contrast_null);
+    fclose(fp);
+}
+
+// -----------------------------------------------------------------------------
+//  landscape.csv: every fitness signal for m = m_min, m_min+step, ..., m_max
+//  (ez and k fixed at the GA's best).  Shows which signal points where,
+//  independent of how well the GA searched.
+// -----------------------------------------------------------------------------
+static void save_landscape_csv(const char* path, const float* h_T, int n,
+                               const FullConfig& fc, const GAResult& r)
+{
+    FILE* fp = fopen(path, "w");
+    if (!fp) { fprintf(stderr, "[main] Cannot write '%s'\n", path); return; }
+
+    std::vector<float> null_series;
+    if (fc.ga.null_correct) {
+        null_series.resize(n);
+        make_surrogate(h_T, n, fc.ga.null_kind, fc.ga.null_seed, null_series.data());
+    }
+
+    fprintf(fp, "# detected_period = %d\n", r.detected_period);
+    fprintf(fp, "# null = %s\n", fc.ga.null_correct ? surrogate_kind_name(fc.ga.null_kind) : "off");
+    fprintf(fp, "m,composite,contrast,regularity,period_reward,"
+                "contrast_raw,contrast_null,regularity_null\n");
+    for (int m = fc.ga.m_min; m <= fc.ga.m_max; m += fc.landscape_step) {
+        STOMPConfig sc;
+        sc.window_size     = m;
+        sc.ez_factor       = r.best_individual.ez_factor;
+        sc.min_motif_count = r.best_individual.min_motif_count;
+        sc.approximate     = false;
+        sc.approx_frac     = 1.0f;
+        sc.recover_indices = false;
+        STOMPResult res = run_stomp(h_T, n, sc);
+        if (!res.mp) continue;
+        STOMPResult nres{};
+        if (!null_series.empty()) nres = run_stomp(null_series.data(), n, sc);
+        Individual ind = r.best_individual;
+        ind.window_size = m;
+        FitnessScore f = evaluate_fitness(res.mp, res.profile_len, ind,
+                                          r.detected_period, fc.ga.weights, nres.mp);
+        fprintf(fp, "%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n", m, f.composite, f.contrast,
+                f.spacing_regularity, f.period_reward,
+                f.contrast_raw, f.contrast_null, f.regularity_null);
+        free(res.mp);  free(res.mpi);
+        free(nres.mp); free(nres.mpi);
+    }
+    fclose(fp);
+    printf("[main] Landscape (step %d) -> '%s'\n", fc.landscape_step, path);
+}
+
+// -----------------------------------------------------------------------------
 //  Print help
 // -----------------------------------------------------------------------------
 static void print_help(const char* argv0)
@@ -164,6 +275,14 @@ static void print_help(const char* argv0)
     printf("  approx_frac=1.0   # <1.0 enables SCRIMP++ approximation\n");
     printf("  n_seeds=5         # for multi-seed reproducibility report\n");
     printf("  verbose=1\n");
+    printf("  sampling_rate=0   # Hz; with fault_freq_*_hz sets the FFT band\n");
+    printf("  fault_freq_min_hz=0  fault_freq_max_hz=0\n");
+    printf("  period_min=30  period_max=400   # band in samples (fallback)\n");
+    printf("  w_contrast=0.20  w_regularity=0.30  w_period=0.50\n");
+    printf("  period_bias_init=1   # seed population around the FFT period\n");
+    printf("  landscape_step=0     # >0 writes landscape.csv\n");
+    printf("  null_correct=0  null_surrogate=phase  null_seed=12345\n");
+    printf("                       # contrast = real - surrogate (shuffle|phase)\n");
     printf("  input_path=       # blank = use synthetic series\n");
     printf("  output_dir=.      # directory for all output CSV files\n");
 }
@@ -242,6 +361,7 @@ int main(int argc, char** argv)
     }
 
     // -- Save a copy of the series for reference -------------------------------
+    make_dirs(fc.output_dir);
     char tmp_path[600];
     out_path(tmp_path, sizeof(tmp_path), fc.output_dir, "series.csv");
     save_series_csv(tmp_path, h_T, n_ts);
@@ -254,6 +374,9 @@ int main(int argc, char** argv)
     GAResult ga_result = run_ga(h_T, n_ts, fc.ga, /*seed=*/42);
 
     print_convergence(ga_result.fitness_history);
+
+    out_path(tmp_path, sizeof(tmp_path), fc.output_dir, "convergence.csv");
+    save_convergence_csv(tmp_path, ga_result);
 
     // -- Save timing -----------------------------------------------------------
     out_path(tmp_path, sizeof(tmp_path), fc.output_dir, "timing.csv");
@@ -291,23 +414,36 @@ int main(int argc, char** argv)
     }
     printf("+--------------------------------------------------------------+\n\n");
 
+    out_path(tmp_path, sizeof(tmp_path), fc.output_dir, "summary.csv");
+    save_summary_csv(tmp_path, fc, ga_result, n_ts, top, true_m, true_pos1);
+
+    if (fc.landscape_step > 0) {
+        out_path(tmp_path, sizeof(tmp_path), fc.output_dir, "landscape.csv");
+        save_landscape_csv(tmp_path, h_T, n_ts, fc, ga_result);
+    }
+
     // -- Multi-seed reproducibility report ------------------------------------
-    printf("Running multi-seed reproducibility experiment (%d seeds)...\n",
-           fc.n_seeds);
-    // Use deterministic seeds derived from base seed 42
-    std::vector<unsigned int> seeds(fc.n_seeds);
-    for (int s = 0; s < fc.n_seeds; s++) seeds[s] = 42 + (unsigned)s * 1000;
+    // n_seeds = 0 skips it (e.g. batch experiments where each segment is one run)
+    if (fc.n_seeds > 0) {
+        printf("Running multi-seed reproducibility experiment (%d seeds)...\n",
+               fc.n_seeds);
+        // Use deterministic seeds derived from base seed 42
+        std::vector<unsigned int> seeds(fc.n_seeds);
+        for (int s = 0; s < fc.n_seeds; s++) seeds[s] = 42 + (unsigned)s * 1000;
 
-    // Quiet mode for multi-seed (avoid wall of text)
-    GAConfig quiet_cfg = fc.ga;
-    quiet_cfg.verbose = false;
+        // Quiet mode for multi-seed (avoid wall of text)
+        GAConfig quiet_cfg = fc.ga;
+        quiet_cfg.verbose = false;
 
-    MultiseedReport ms_report = run_multiseed(
-        h_T, n_ts, quiet_cfg, seeds.data(), fc.n_seeds);
-    ms_report.print();
+        MultiseedReport ms_report = run_multiseed(
+            h_T, n_ts, quiet_cfg, seeds.data(), fc.n_seeds);
+        ms_report.print();
 
-    out_path(tmp_path, sizeof(tmp_path), fc.output_dir, "multiseed.csv");
-    ms_report.save_csv(tmp_path);
+        out_path(tmp_path, sizeof(tmp_path), fc.output_dir, "multiseed.csv");
+        ms_report.save_csv(tmp_path);
+    } else {
+        printf("Multi-seed report skipped (n_seeds = 0)\n\n");
+    }
 
     // -- Fitness-recall sweep (only for synthetic series where truth is known) --
     if (true_pos1 >= 0 && true_m > 0) {

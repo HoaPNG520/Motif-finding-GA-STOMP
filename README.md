@@ -417,23 +417,29 @@ heuristic (lowest normalised distance). This work jointly optimises m with
 ## 9. Project Structure
 
 ```
-cuda_ga_stomp/
-│
-├── include/
-│   ├── common.cuh        CUDA error macros, atomicMinFloat, warpReduceMin
-│   ├── utils.cuh         Stats and QT-init kernel declarations
-│   ├── stomp.cuh         STOMPConfig, STOMPResult, run_stomp declaration
-│   ├── fitness.cuh       Individual, FitnessScore, evaluate_fitness declaration
-│   └── ga.cuh            GAConfig, GAResult, run_ga declaration
-│
-├── src/
-│   ├── utils.cu          compute_stats_kernel + compute_qt_init_kernel
-│   ├── stomp.cu          stomp_diagonal_kernel + run_stomp host launcher
-│   ├── fitness.cu        Three fitness signals + composite evaluator
-│   ├── ga.cu             GA operators + main evolutionary loop
-│   └── main.cu           Synthetic data generation + CLI driver
-│
-└── Makefile              Release / debug / profile targets
+Motif-finding-GA-STOMP/
+|
++-- include/
+|   +-- common.cuh        CUDA error macros, atomicMinFloat, warpReduceMin
+|   +-- utils.cuh         Stats and QT-init kernel declarations
+|   +-- stomp.cuh         STOMPConfig, STOMPResult, run_stomp declaration
+|   +-- fitness.cuh       Individual, FitnessScore, evaluate_fitness, FFT period
+|   +-- ga.cuh            GAConfig (incl. period band), GAResult, run_ga
+|   +-- io.cuh            CSV / binary series loaders, MP writer
+|   +-- timer.cuh         CUDA-event and wall-clock timers, TimingReport
+|   +-- config.cuh        key=value config parser (FullConfig)
+|   +-- benchmark.cuh     multi-seed report, fitness-recall sweep
+|
++-- src/                  implementations of the headers above + main.cu driver
+|
++-- plot_results.py       publication figures from output directories
++-- kaggle_run.ipynb      end-to-end CWRU run on a Kaggle GPU
++-- kaggle/
+|   +-- prepare_kernel.py stages the notebook + kernel-metadata.json for CI
++-- tests/
+|   +-- make_mock_results.py  fake outputs for the plotting smoke test
++-- .github/workflows/ci.yml  build, smoke tests, on-demand Kaggle run
++-- Makefile              Release / debug / profile targets
 ```
 
 ---
@@ -721,12 +727,11 @@ extends to any CUDA-accelerated model (demonstrated in §11).
 
 **Signal prep:** First 6000 samples of DE_time, 12kHz sampling, 1797 RPM
 
-### Build (Kaggle P100, sm_60)
+### Build
+Kaggle retired the P100; sessions now get a T4 (`sm_75`). The notebook reads the
+compute capability from `nvidia-smi` and passes it to make, so no edit is needed:
 ```bash
-nvcc -std=c++17 -arch=sm_60 -Iinclude -O3 -DNDEBUG \
-  --expt-relaxed-constexpr -o ga_stomp \
-  src/main.cu src/stomp.cu src/utils.cu src/fitness.cu \
-  src/ga.cu src/io.cu src/timer.cu src/config.cu src/benchmark.cu
+make SM_ARCH=sm_75        # T4;  use sm_60 for P100, sm_86 for RTX 30xx / A100
 ```
 
 ### Config Template (save as `run_config.ini`)
@@ -745,9 +750,38 @@ elite_count=2
 approx_frac=0.5
 n_seeds=3
 verbose=1
+# FFT period search band. With sampling_rate set, give the band in Hz;
+# it is converted to samples as [fs / f_max, fs / f_min] = [40, 240] here.
+sampling_rate=12000
+fault_freq_min_hz=50
+fault_freq_max_hz=300
+# Without sampling_rate, the band is given directly in samples:
+# period_min=30
+# period_max=400
+# Fitness weights (set one to 0 for an ablation). For "no period", also set
+# period_bias_init=0 so the initial population is not seeded at the FFT period.
+w_contrast=0.20
+w_regularity=0.30
+w_period=0.50
+period_bias_init=1
+# >0: after the GA, evaluate every signal for m = m_min, m_min+step, ... and
+# write landscape.csv
+landscape_step=5
+# Null-corrected contrast: score contrast as real minus a surrogate copy of the
+# series with the repeating structure destroyed (shuffle = random permutation;
+# phase = Fourier phase randomisation, keeps the power spectrum). Removes the
+# part of contrast a window gets just for its length. Doubles STOMP calls.
+null_correct=0
+null_surrogate=phase
+null_seed=12345
 input_path=data/IR007_1797.csv
 output_dir=results/IR007
 ```
+
+Why 50-300 Hz: at 1797 rpm the shaft turns at 29.95 Hz, so
+BPFI = 5.415 x 29.95 = 162 Hz (74 samples at 12 kHz) and
+BPFO = 3.585 x 29.95 = 107 Hz (112 samples). The band covers both with margin
+and keeps the FFT from locking onto shaft-rate or high-frequency resonance peaks.
 
 ### Run All 4 Datasets
 ```bash
@@ -791,30 +825,43 @@ output_dir=results/IR007
 ### Key Output Files (per dataset in `output_dir/`)
 | File | Purpose |
 |------|---------|
+| `summary.csv` | One row: best m / ez / k, fitness parts, FFT period and band, top motif |
+| `convergence.csv` | Best and mean population fitness per generation |
 | `multiseed.csv` | Mean±std across 3 seeds (reproducibility) |
-| `sweep.csv` | Fitness-recall sweep (Spearman ρ validation) |
+| `sweep.csv` | Fitness-recall sweep (Spearman ρ validation, synthetic only) |
 | `matrix_profile.csv` | Final MP with distances/indices |
+| `timing.csv` | STOMP / precompute / fitness / GA time breakdown |
 | `run_config.ini` | Exact config used (reproducibility) |
+| `figures/` | Written by `plot_results.py` (PNG + PDF) |
 
 ### Troubleshooting
-- **Kernel launch fails**: Verify `sm_60` for P100 (not `sm_75` or `sm_86`)
+- **Kernel launch fails / "no kernel image"**: `SM_ARCH` does not match the GPU; check `nvidia-smi --query-gpu=compute_cap --format=csv`
+- **FFT picks the wrong period**: narrow `fault_freq_min_hz` / `fault_freq_max_hz` around the expected defect frequency
 - **OOM**: Reduce `population` or increase `approx_frac`
 - **Drift to m_max (187-188)**: Reward hacking — see HANDOFF.md for FFT fallback
 - **Low Spearman ρ (<0.6)**: Fitness proxy not correlating with recall
 
-### Fitness Function (Current: v6 Non-overlapping Gaps)
+### Fitness Function (current)
 ```
-F = 0.35 × contrast + 0.65 × regularity
+F = 0.20 x contrast + 0.30 x regularity + 0.50 x period_reward
 
-contrast = 1 - exp(-(d_second - d_top) / mean_mp)
-
-regularity = 1 / (1 + CV)  where CV = std(gaps) / mean(gaps)
-  gaps = non-overlapping intervals between top-50 MP positions
-  (only gaps >= window_size counted)
+contrast      = 1 - exp(-(d_k - d_top) / mean_mp)
+                d_k = distance of the k-th DISTINCT instance (>= m from the others)
+regularity    = clamp(1 - 4 * mean_i | g_i/g0 - max(1, round(g_i/g0)) |, 0, 1)
+                g_i = gaps between K distinct motif instances (non-maximum
+                      suppression at radius m, K = clamp(L/2m, 6, 30)),
+                g0  = median gap; 1 = periodic (skips allowed), 0 = random
+period_reward = exp(-0.5 * ((m - P) / (0.2 P))^2)
+                P = FFT consensus period of a reference MP (w_ref = 30, 40, 50),
+                    searched inside the configured period band
 ```
 
 ### Version History
-- **v6** (current): Non-overlapping gap filter in spacing_regularity
+- **v6.2** (current): regularity and contrast use distinct motif instances (the old
+  regularity returned 0 on all CWRU fault signals; old contrast was ~0.01 and pushed
+  k to k_max). Fitness weights configurable for ablations; landscape.csv.
+- **v6.1**: FFT reference-period reward; period band configurable in Hz via sampling_rate
+- **v6 (earlier)**: Non-overlapping gap filter in spacing_regularity
 - **v5**: Fixed-count (50) selection, consecutive gaps
 - **v4**: Sigmoid prior on m
 - **v3**: GAP_LO floor tuning
@@ -822,3 +869,83 @@ regularity = 1 / (1 + CV)  where CV = std(gaps) / mean(gaps)
 - **v1**: count_score in composite (gameable)
 
 See `HANDOFF.md` for full history and fallback plan.
+
+---
+
+## Appendix B: Automation (GitHub Actions + Kaggle)
+
+`.github/workflows/ci.yml` has three jobs:
+
+| Job | Runs on | What it checks |
+|-----|---------|----------------|
+| `build` | every push and PR | compiles with nvcc 12.4 in a CUDA container (no GPU needed), runs `./ga_stomp --help` |
+| `python` | every push and PR | notebook cells parse, kernel staging works, `plot_results.py` runs on mock outputs |
+| `kaggle` | on demand | pushes `kaggle_run.ipynb` to a private Kaggle GPU notebook pinned to the commit, waits, downloads `results/`, uploads it as a workflow artifact, and fails if `RUN_STATUS.txt` reports a failure |
+
+Every Kaggle run is committed to the `results` branch as `runs/<UTC time>_<sha7>/`
+(the notebook's whole `results/` folder: CSVs, logs, figures), with a line appended
+to `INDEX.csv` and the folder name written to `LATEST`. Fetch it with
+`git fetch origin results && git checkout results`.
+
+The notebook runs one experiment (`EXPERIMENT` in its settings cell), four fitness
+variants on each signal:
+
+| Experiment | Variant | Config change |
+|------------|---------|---------------|
+| `ablation` | `full` | defaults (0.20 / 0.30 / 0.50) |
+| | `no_period` | `w_period=0`, `period_bias_init=0` |
+| | `no_regularity` | `w_regularity=0` |
+| | `no_contrast` | `w_contrast=0` |
+| `null_contrast` (default) | `full` | defaults |
+| | `contrast_raw` | contrast only, no FFT term or seeding |
+| | `null_shuffle` | as above, contrast minus a shuffled copy |
+| | `null_phase` | as above, contrast minus a phase-randomised copy |
+| `band_compare` (default) | `band_50_300` | FFT band 50-300 Hz; inner- and outer-race files only, 3 segments each |
+| | `band_geometry` | FFT band 93-178 Hz: lowest BPFO to highest BPFI over 1730-1797 rpm, +-10% (excludes 2x/3x shaft harmonics, uses no per-file labels) |
+| `fault_detection` | `detect` | full pipeline with phase-corrected contrast logged; all 40 CWRU 12k drive-end files (healthy, inner race, outer race, ball; 3 sizes; 4 loads), three 6000-sample segments each |
+
+`band_compare` writes `band_compare.csv` (share within 5% of the expected window per
+fault type, size and band), `fft_lock.csv` (whether the FFT period matched the file's
+own fault frequency, the other fault type, a shaft harmonic, or nothing),
+`fig_band_compare` and `fig_band_accuracy`.
+
+`fault_detection` writes `figures/detection.csv` (one row per segment, with kurtosis
+and RMS as baselines), `detection_auc.csv` (healthy-vs-faulty AUC per statistic),
+`window_accuracy.csv`, `fig_detection` and `fig_window_accuracy`. The expected window
+uses each file's recorded RPM. Every run also checks one GPU matrix profile against
+a float64 NumPy brute force (`verify:stomp` in `RUN_STATUS.txt`).
+
+Note: `106.mat` is the 0.007" inner-race fault at 1 HP, not a 0.014" fault; earlier
+results on the `results` branch label it `IR014`.
+
+`results/figures/ablation.csv` and `fig_ablation` compare the window each variant
+selects; each run's `fig_landscape` shows every signal against m.
+
+The `kaggle` job only runs when you start it from the Actions tab ("Run workflow")
+or when the pushed commit message contains `[kaggle]`, so ordinary pushes do not
+use the weekly Kaggle GPU quota.
+
+Repository settings it reads (Settings -> Secrets and variables -> Actions):
+
+| Name | Kind | Value |
+|------|------|-------|
+| `KAGGLE_API_TOKEN` | secret | token from kaggle.com/settings -> API |
+| `KAGGLE_USERNAME` | variable | your Kaggle username; the kernel is created as `<username>/ga-stomp-cwru` |
+
+The token is only passed to the Kaggle CLI as an environment variable; it is never
+written to a file or into the notebook.
+
+Inside Kaggle, the notebook finds the CWRU `.mat` files under `/kaggle/input`
+(the dataset is attached through `kernel-metadata.json`). If you run it in the
+Kaggle UI without the dataset attached, add a Kaggle secret named
+`KAGGLE_API_TOKEN` under Add-ons -> Secrets and it downloads the dataset instead.
+
+### Figures
+```bash
+python plot_results.py results/IR007 results/IR014 results/OR007 results/Normal \
+    --expected IR007=74 IR014=74 OR007=112 --out results/figures
+```
+Per run: `fig_mp`, `fig_convergence`, `fig_multiseed`, `fig_timing`, `fig_landscape`
+(needs `landscape_step`), and `fig_sweep` (synthetic only). Ablation layout:
+`python plot_results.py --ablation results --expected IR007=74 OR007=112`. Across runs: `fig_comparison` and `combined_summary.csv`
+(one row per dataset, for the results table).

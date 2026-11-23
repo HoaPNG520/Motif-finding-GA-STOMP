@@ -6,4 +6,11 @@ results/
 *.txt
 results/
 AGENTS.md
-HANDOFF.md
+HANDOFF.md# build artefacts
+obj/
+ga_stomp
+# CI / Kaggle staging and downloads
+build/
+kaggle_output/
+figures/
+__pycache__/

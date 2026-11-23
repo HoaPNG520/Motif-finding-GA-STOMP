@@ -40,7 +40,8 @@ SRCS := $(SRC_DIR)/main.cu    \
         $(SRC_DIR)/io.cu      \
         $(SRC_DIR)/timer.cu   \
         $(SRC_DIR)/config.cu  \
-        $(SRC_DIR)/benchmark.cu
+        $(SRC_DIR)/benchmark.cu \
+        $(SRC_DIR)/surrogate.cu
 
 OBJS := $(patsubst $(SRC_DIR)/%.cu, $(OBJ_DIR)/%.o, $(SRCS))
 
@@ -64,8 +65,11 @@ $(BIN): $(OBJS)
 	@echo "  Run:   ./$@ --help"
 	@echo "---------------------------------------------------"
 
+# -MMD -MP: rebuild objects when an included header changes
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cu | $(OBJ_DIR)
-	$(NVCC) $(NVCC_FLAGS) -c -o $@ $<
+	$(NVCC) $(NVCC_FLAGS) -MMD -MP -c -o $@ $<
+
+-include $(OBJS:.o=.d)
 
 $(OBJ_DIR):
 	mkdir -p $(OBJ_DIR)

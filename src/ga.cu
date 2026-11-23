@@ -16,17 +16,40 @@
 #include <numeric>
 
 // -----------------------------------------------------------------------------
-//  Random individual
+//  FFT period search band
 // -----------------------------------------------------------------------------
+void resolve_period_band(const GAConfig &cfg, int n, int *pmin, int *pmax)
+{
+    int lo = cfg.period_min;
+    int hi = cfg.period_max;
+
+    if (cfg.sampling_rate > 0 &&
+        cfg.fault_freq_min_hz > 0.0f &&
+        cfg.fault_freq_max_hz > cfg.fault_freq_min_hz)
+    {
+        // Higher frequency -> shorter period, so f_max gives the lower bound.
+        lo = (int)floorf((float)cfg.sampling_rate / cfg.fault_freq_max_hz);
+        hi = (int)ceilf ((float)cfg.sampling_rate / cfg.fault_freq_min_hz);
+    }
+
+    lo = std::max(lo, 2);
+    hi = std::min(hi, n / 2);
+    if (hi <= lo) hi = std::min(n / 2, lo + 1);
+
+    *pmin = lo;
+    *pmax = hi;
+}
+
 // -----------------------------------------------------------------------------
 //  Random individual (with optional period bias)
 // -----------------------------------------------------------------------------
-Individual random_individual(const GAConfig &cfg, unsigned int seed, int detected_period = -1)
+Individual random_individual(const GAConfig &cfg, unsigned int seed, int detected_period)
 {
     srand(seed);
     Individual ind;
     
-    if (detected_period > 0 && detected_period >= cfg.m_min && detected_period <= cfg.m_max)
+    if (cfg.period_bias_init && detected_period > 0 &&
+        detected_period >= cfg.m_min && detected_period <= cfg.m_max)
     {
         // Bias window_size toward detected period using Gaussian distribution
         // Sigma = 20% of range, clamped to bounds
@@ -114,6 +137,8 @@ static FitnessScore evaluate_individual(
     int n,
     float approx_frac,
     int detected_period,  // FFT-detected period for reward signal
+    const FitnessWeights &weights,
+    const float *h_null,  // surrogate series or nullptr
     TimingReport &timing)
 {
     STOMPConfig scfg;
@@ -130,16 +155,28 @@ static FitnessScore evaluate_individual(
     timing.precompute_total_ms += res.precompute_ms;
     timing.n_stomp_calls++;
 
+    STOMPResult null_res{};
+    if (h_null)
+    {
+        null_res = run_stomp(h_null, n, scfg);
+        timing.stomp_total_ms += null_res.kernel_ms;
+        timing.precompute_total_ms += null_res.precompute_ms;
+        timing.n_stomp_calls++;
+    }
+
     FitnessScore fs{};
     if (res.mp)
     {
         WallTimer ft;
         ft.start();
-        fs = evaluate_fitness(res.mp, res.profile_len, ind, detected_period);
+        fs = evaluate_fitness(res.mp, res.profile_len, ind, detected_period, weights,
+                              null_res.mp);
         timing.fitness_total_ms += ft.stop();
         free(res.mp);
         free(res.mpi);
     }
+    free(null_res.mp);
+    free(null_res.mpi);
     ind.fitness = fs.composite;
     return fs;
 }
@@ -163,6 +200,10 @@ GAResult run_ga(
            cfg.population_size, cfg.generations);
     printf("|  m range        : [%d, %d]  | approx_frac: %.2f           |\n",
            cfg.m_min, cfg.m_max, cfg.approx_frac);
+    printf("|  weights        : contrast %.2f  regularity %.2f  period %.2f\n",
+           cfg.weights.contrast, cfg.weights.regularity, cfg.weights.period);
+    printf("|  FFT-biased init: %s\n", cfg.period_bias_init ? "on" : "off");
+    printf("|  null contrast  : %s\n", cfg.null_correct ? surrogate_kind_name(cfg.null_kind) : "off");
     printf("+--------------------------------------------------------------+\n\n");
 
     // =========================================================================
@@ -170,6 +211,15 @@ GAResult run_ga(
     //  Uses multiple reference window sizes for robust period estimation
     // =========================================================================
     int detected_period = -1;
+    int band_min = 0, band_max = 0;
+    resolve_period_band(cfg, n, &band_min, &band_max);
+    if (cfg.sampling_rate > 0 && cfg.fault_freq_min_hz > 0.0f && cfg.fault_freq_max_hz > 0.0f)
+        printf("[fft] Search band: [%d, %d] samples  (fs=%d Hz, f=[%.1f, %.1f] Hz)\n",
+               band_min, band_max, cfg.sampling_rate,
+               cfg.fault_freq_min_hz, cfg.fault_freq_max_hz);
+    else
+        printf("[fft] Search band: [%d, %d] samples  (period_min/period_max)\n",
+               band_min, band_max);
     {
         // Try multiple reference window sizes to get consensus period
         const int ref_windows[] = {30, 40, 50};
@@ -191,7 +241,8 @@ GAResult run_ga(
             STOMPResult ref_res = run_stomp(h_T, n, ref_cfg);
             if (ref_res.mp)
             {
-                int period = detect_dominant_period(ref_res.mp, ref_res.profile_len, 30, 400);
+                int period = detect_dominant_period(ref_res.mp, ref_res.profile_len,
+                                                    band_min, band_max);
                 if (period > 0)
                 {
                     detected_periods.push_back(period);
@@ -259,12 +310,28 @@ GAResult run_ga(
     }
 
     // Initialise population
+    // Surrogate for null-corrected contrast (same for every individual)
+    std::vector<float> null_series;
+    const float *h_null = nullptr;
+    if (cfg.null_correct)
+    {
+        null_series.resize(n);
+        make_surrogate(h_T, n, cfg.null_kind, cfg.null_seed, null_series.data());
+        h_null = null_series.data();
+        printf("[null] %s surrogate (seed %u): contrast is scored as real - surrogate\n",
+               surrogate_kind_name(cfg.null_kind), cfg.null_seed);
+    }
+
     std::vector<Individual> pop(cfg.population_size);
     for (int i = 0; i < cfg.population_size; i++)
         pop[i] = random_individual(cfg, seed + (unsigned)i * 31337, detected_period);
 
     GAResult result;
     result.fitness_history.reserve(cfg.generations);
+    result.mean_fitness_history.reserve(cfg.generations);
+    result.detected_period = detected_period;
+    result.period_band_min = band_min;
+    result.period_band_max = band_max;
     TimingReport &timing = result.timing;
     timing = {};
 
@@ -278,7 +345,8 @@ GAResult run_ga(
         // Evaluate population
         std::vector<FitnessScore> scores(cfg.population_size);
         for (int i = 0; i < cfg.population_size; i++)
-            scores[i] = evaluate_individual(pop[i], h_T, n, cfg.approx_frac, detected_period, timing);
+            scores[i] = evaluate_individual(pop[i], h_T, n, cfg.approx_frac, detected_period, cfg.weights,
+                                            h_null, timing);
 
         // Sort descending
         std::vector<int> idx(cfg.population_size);
@@ -288,6 +356,9 @@ GAResult run_ga(
 
         float best_fitness = pop[idx[0]].fitness;
         result.fitness_history.push_back(best_fitness);
+        float mean_fit = 0.0f;
+        for (const auto &ind : pop) mean_fit += ind.fitness;
+        result.mean_fitness_history.push_back(mean_fit / (float)cfg.population_size);
 
         if (cfg.verbose)
         {
@@ -322,26 +393,33 @@ GAResult run_ga(
     // Final evaluation with full STOMP + MPI recovery
     for (auto &ind : pop)
         if (ind.fitness < 0.0f)
-            evaluate_individual(ind, h_T, n, 1.0f, detected_period, timing);
+            evaluate_individual(ind, h_T, n, 1.0f, detected_period, cfg.weights, h_null, timing);
 
     std::sort(pop.begin(), pop.end(), [](const Individual &a, const Individual &b)
               { return a.fitness > b.fitness; });
 
     result.best_individual = pop[0];
 
-    // Final best run: full mode + recover indices
+    // Final best run in full (non-approximate) mode for the reported fitness.
+    // Indices are not recovered here: this MP is only scored and freed, and
+    // main.cu runs its own final STOMP with recover_indices for the CSV.
     STOMPConfig best_cfg;
     best_cfg.window_size = pop[0].window_size;
     best_cfg.ez_factor = pop[0].ez_factor;
     best_cfg.min_motif_count = pop[0].min_motif_count;
     best_cfg.approximate = false;
     best_cfg.approx_frac = 1.0f;
-    best_cfg.recover_indices = true; // fill MPI[] properly on final run
+    best_cfg.recover_indices = false;
 
     STOMPResult best_res = run_stomp(h_T, n, best_cfg);
-    result.best_fitness = evaluate_fitness(best_res.mp, best_res.profile_len, pop[0], detected_period);
+    STOMPResult best_null{};
+    if (h_null) best_null = run_stomp(h_null, n, best_cfg);
+    result.best_fitness = evaluate_fitness(best_res.mp, best_res.profile_len, pop[0],
+                                           detected_period, cfg.weights, best_null.mp);
     free(best_res.mp);
     free(best_res.mpi);
+    free(best_null.mp);
+    free(best_null.mpi);
 
     printf("\n+--------------------------------------------------------------+\n");
     printf("|                   OPTIMISATION RESULT                       |\n");

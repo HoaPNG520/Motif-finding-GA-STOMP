@@ -111,45 +111,55 @@ __global__ void stomp_approx_kernel(
 
 // -----------------------------------------------------------------------------
 //  MPI recovery -- CPU pass after MP is downloaded
-//  For each position i, finds which diagonal produced the minimum MP[i].
+//  For each position i, the index j of its nearest non-trivial neighbour.
+//
+//  O(L^2): window means/stds are precomputed once with running sums, and QT
+//  slides along each diagonal exactly as in the GPU kernel.  The neighbour is
+//  the CPU's own argmin (in double precision), so every i >= 0 gets an index.
+//  The previous version recomputed mean/std inside the inner loop (O(L^2 m),
+//  ~5-20 s per call at n=6000 on a Kaggle CPU) and matched against the GPU
+//  float MP with a fixed 1e-4 tolerance, which could leave entries at -1.
+//  h_mp is unused but kept so the call site doesn't change.
 // -----------------------------------------------------------------------------
 static void recover_mpi_cpu(
     const float* h_T,
-    const float* h_mp,
+    const float* /*h_mp*/,
     int*         h_mpi,
     int n, int m, int ez)
 {
-    int L = n - m + 1;
+    const int L = n - m + 1;
+    if (L <= 0) return;
+
+    std::vector<double> mu(L), sig(L);
+    double s = 0.0, s2 = 0.0;
+    for (int k = 0; k < m; k++) { s += h_T[k]; s2 += (double)h_T[k] * h_T[k]; }
+    for (int i = 0; i < L; i++) {
+        if (i > 0) {
+            double out = h_T[i - 1], in = h_T[i + m - 1];
+            s  += in - out;
+            s2 += in * in - out * out;
+        }
+        double mean = s / m;
+        mu[i]  = mean;
+        sig[i] = sqrt(fmax(0.0, s2 / m - mean * mean)) + 1e-10;
+    }
+
+    std::vector<double> best(L, 1e300);
     for (int i = 0; i < L; i++) h_mpi[i] = -1;
 
-    for (int d = ez; d < L; d++) {
-        int diag_len = L - d;
+    for (int d = std::max(ez, 1); d < L; d++) {
         double qt = 0.0;
         for (int k = 0; k < m; k++) qt += (double)h_T[k] * h_T[k + d];
-
-        for (int i = 0; i < diag_len; i++) {
+        for (int i = 0; i + d < L; i++) {
             int j = i + d;
-            if (i > 0) {
+            if (i > 0)
                 qt += (double)h_T[i + m - 1] * h_T[j + m - 1]
-                    - (double)h_T[i - 1]      * h_T[j - 1];
-            }
-
-            // Compute mean/std for window i
-            double si = 0, si2 = 0, sj = 0, sj2 = 0;
-            for (int k = 0; k < m; k++) {
-                double vi = h_T[i+k], vj = h_T[j+k];
-                si += vi; si2 += vi*vi; sj += vj; sj2 += vj*vj;
-            }
-            double mu_i  = si/m,  mu_j  = sj/m;
-            double sig_i = sqrt(fmax(0.0, si2/m - mu_i*mu_i)) + 1e-10;
-            double sig_j = sqrt(fmax(0.0, sj2/m - mu_j*mu_j)) + 1e-10;
-            double pear  = (qt/m - mu_i*mu_j) / (sig_i * sig_j);
+                    - (double)h_T[i - 1]     * h_T[j - 1];
+            double pear = (qt / m - mu[i] * mu[j]) / (sig[i] * sig[j]);
             pear = fmin(1.0, fmax(-1.0, pear));
-            float dist   = (float)sqrt(2.0 * m * (1.0 - pear));
-
-            float tol = 1e-4f;
-            if (fabsf(dist - h_mp[i]) < tol && h_mpi[i] == -1) h_mpi[i] = j;
-            if (fabsf(dist - h_mp[j]) < tol && h_mpi[j] == -1) h_mpi[j] = i;
+            double dist2 = 2.0 * m * (1.0 - pear);       // compare squared
+            if (dist2 < best[i]) { best[i] = dist2; h_mpi[i] = j; }
+            if (dist2 < best[j]) { best[j] = dist2; h_mpi[j] = i; }
         }
     }
 }

@@ -10,22 +10,17 @@
 //  |  Contrast  (w=0.20) |  Gap between top-motif distance and background.    |
 //  |                     |  High gap → motif is genuinely distinctive.        |
 //  +---------------------+----------------------------------------------------+
-//  |  Regularity(w=0.30) |  Coefficient of Variation of gaps between the      |
-//  |                     |  FIXED_COUNT lowest-MP positions.                  |
-//  |                     |  Low CV → motifs recur at a consistent period      |
-//  |                     |  → window aligns with the true defect frequency.   |
+//  |  Regularity(w=0.30) |  Distinct motif instances (>= m apart); how well   |
+//  |                     |  their gaps fit integer multiples of the median    |
+//  |                     |  gap.  1 = periodic, 0 = random spacing.           |
 //  +---------------------+----------------------------------------------------+
 //  |  Period Reward(w=0.50)| Gaussian reward centered on FFT-detected period.  |
 //  |                     |  Strongly guides GA toward true defect frequency.  |
 //  +---------------------+----------------------------------------------------+
 //
-//  Design rationale for fixed-count selection:
-//    A percentage-based threshold (e.g. top 5 %) always selects
-//    profile_len/20 positions, giving mean_gap ≈ 20 regardless of window
-//    size.  This makes the regularity signal window-size-blind and creates
-//    a systematic bias toward small windows.  Using a fixed count of 50
-//    decouples mean_gap from window size (mean_gap ≈ profile_len/50 ≈ 118),
-//    so the CV of gaps purely measures periodic recurrence quality.
+//  Both contrast and regularity work on DISTINCT motif instances picked by
+//  non-maximum suppression (positions >= m apart).  Raw "k-th smallest MP" or
+//  "top-50 positions" are dominated by trivial neighbours of one occurrence.
 // =============================================================================
 
 #include "common.cuh"
@@ -41,13 +36,25 @@ struct Individual
 
 struct FitnessScore
 {
-    float composite;            // final weighted score ∈ [0, 1]
-    float contrast;             // Signal 1: motif distinctiveness
+    float composite;            // final weighted score
+    float contrast;             // Signal 1 as used in the composite:
+                                //   raw, or raw - null when a null MP is given
+    float contrast_raw;         // contrast of the real series
+    float contrast_null;        // contrast of the surrogate (NAN if none)
+    float regularity_null;      // regularity of the surrogate (NAN if none; logged only)
     float spacing_regularity;   // Signal 2: periodic recurrence of top-N motifs
     float period_reward;        // Signal 3: Gaussian reward around detected period
     float count_score;          // legacy field (computed but not used in composite)
     int   discovered_motifs;    // number of subsequences below count threshold
     float spacing_consistency;  // legacy field (mirrors regularity for logging)
+};
+
+// Composite weights (defaults match the v6 design; override per run for ablations)
+struct FitnessWeights
+{
+    float contrast   = 0.20f;
+    float regularity = 0.30f;
+    float period     = 0.50f;
 };
 
 // Detect dominant period from MP using FFT (returns period in samples, or -1)
@@ -58,9 +65,13 @@ float compute_period_reward(int window_size, int detected_period, float sigma);
 
 // Main fitness evaluator (with optional period reward)
 FitnessScore evaluate_fitness(
-    const float *mp,
-    int          profile_len,
-    const Individual &ind,
-    int          detected_period = -1);  // -1 = no period reward
+    const float          *mp,
+    int                   profile_len,
+    const Individual     &ind,
+    int                   detected_period = -1,          // -1 = no period reward
+    const FitnessWeights &w = FitnessWeights(),
+    const float          *null_mp = nullptr);            // surrogate MP, same config
+                                                         // and length; enables
+                                                         // contrast - contrast_null
 
 void print_fitness(const Individual &ind, const FitnessScore &fs);
