@@ -561,7 +561,7 @@ def detection(path, out):
         ax.set_ylabel("window selected by the pipeline")
         ax.set_title(f"Window accuracy: median error {100 * np.median(rel):.1f}%, "
                      f"{100 * np.mean(rel <= 0.05):.0f}% within 5%", loc="left", fontsize=9)
-        ax.legend(loc="upper left")
+        ax.legend(loc="lower right")
         save(fig, out, "fig_window_accuracy")
 
 
