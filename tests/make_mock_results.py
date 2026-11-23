@@ -31,3 +31,15 @@ def make(d, period, n=800, synth=False):
 make(sys.argv[1]+"/IR007",74); make(sys.argv[1]+"/OR007",112); make(sys.argv[1]+"/synthetic",80,synth=True)
 for v, shift in [("full",0),("no_period",-40),("no_regularity",3),("no_contrast",1)]:
     make(f"{sys.argv[1]}/ablation/{v}/IR007",max(20,74+shift)); make(f"{sys.argv[1]}/ablation/{v}/OR007",max(20,112+shift))
+
+# detection.csv in the fault_detection layout (one row per segment)
+rows=["name,cls,size,load,segment,expected_m,best_m,kurtosis,rms,contrast_raw,contrast_corr,land_raw_mean,land_corr_mean"]
+for cls in ("Normal","IR","OR","B"):
+    for load in range(4):
+        for seg in range(3):
+            e={"IR":75,"OR":113}.get(cls,"")
+            b=(e+int(rng.integers(-3,4))) if e else 150
+            f=0 if cls=="Normal" else 1
+            rows.append(f"{cls}_{load}hp_s{seg},{cls},{7*f},{load},{seg},{e},{b},{rng.normal(3+10*f,1):.3f},{rng.normal(0.1+0.2*f,0.02):.3f},{rng.uniform(0.1,0.4):.3f},{rng.normal(0.15*f,0.03):.3f},{rng.uniform(0.1,0.4):.3f},{rng.normal(0.15*f,0.03):.3f}")
+os.makedirs(sys.argv[1]+"/detection",exist_ok=True)
+open(sys.argv[1]+"/detection/detection.csv","w").write("\n".join(rows)+"\n")

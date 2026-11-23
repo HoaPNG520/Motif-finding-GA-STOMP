@@ -900,6 +900,16 @@ variants on each signal:
 | | `contrast_raw` | contrast only, no FFT term or seeding |
 | | `null_shuffle` | as above, contrast minus a shuffled copy |
 | | `null_phase` | as above, contrast minus a phase-randomised copy |
+| `fault_detection` (default) | `detect` | full pipeline with phase-corrected contrast logged; all 40 CWRU 12k drive-end files (healthy, inner race, outer race, ball; 3 sizes; 4 loads), three 6000-sample segments each |
+
+`fault_detection` writes `figures/detection.csv` (one row per segment, with kurtosis
+and RMS as baselines), `detection_auc.csv` (healthy-vs-faulty AUC per statistic),
+`window_accuracy.csv`, `fig_detection` and `fig_window_accuracy`. The expected window
+uses each file's recorded RPM. Every run also checks one GPU matrix profile against
+a float64 NumPy brute force (`verify:stomp` in `RUN_STATUS.txt`).
+
+Note: `106.mat` is the 0.007" inner-race fault at 1 HP, not a 0.014" fault; earlier
+results on the `results` branch label it `IR014`.
 
 `results/figures/ablation.csv` and `fig_ablation` compare the window each variant
 selects; each run's `fig_landscape` shows every signal against m.

@@ -423,22 +423,27 @@ int main(int argc, char** argv)
     }
 
     // -- Multi-seed reproducibility report ------------------------------------
-    printf("Running multi-seed reproducibility experiment (%d seeds)...\n",
-           fc.n_seeds);
-    // Use deterministic seeds derived from base seed 42
-    std::vector<unsigned int> seeds(fc.n_seeds);
-    for (int s = 0; s < fc.n_seeds; s++) seeds[s] = 42 + (unsigned)s * 1000;
+    // n_seeds = 0 skips it (e.g. batch experiments where each segment is one run)
+    if (fc.n_seeds > 0) {
+        printf("Running multi-seed reproducibility experiment (%d seeds)...\n",
+               fc.n_seeds);
+        // Use deterministic seeds derived from base seed 42
+        std::vector<unsigned int> seeds(fc.n_seeds);
+        for (int s = 0; s < fc.n_seeds; s++) seeds[s] = 42 + (unsigned)s * 1000;
 
-    // Quiet mode for multi-seed (avoid wall of text)
-    GAConfig quiet_cfg = fc.ga;
-    quiet_cfg.verbose = false;
+        // Quiet mode for multi-seed (avoid wall of text)
+        GAConfig quiet_cfg = fc.ga;
+        quiet_cfg.verbose = false;
 
-    MultiseedReport ms_report = run_multiseed(
-        h_T, n_ts, quiet_cfg, seeds.data(), fc.n_seeds);
-    ms_report.print();
+        MultiseedReport ms_report = run_multiseed(
+            h_T, n_ts, quiet_cfg, seeds.data(), fc.n_seeds);
+        ms_report.print();
 
-    out_path(tmp_path, sizeof(tmp_path), fc.output_dir, "multiseed.csv");
-    ms_report.save_csv(tmp_path);
+        out_path(tmp_path, sizeof(tmp_path), fc.output_dir, "multiseed.csv");
+        ms_report.save_csv(tmp_path);
+    } else {
+        printf("Multi-seed report skipped (n_seeds = 0)\n\n");
+    }
 
     // -- Fitness-recall sweep (only for synthetic series where truth is known) --
     if (true_pos1 >= 0 && true_m > 0) {

@@ -24,6 +24,11 @@ Ablation mode
 reads results/<variant>/<dataset>/summary.csv and writes results/figures/
 ablation.csv and fig_ablation.{png,pdf} (window chosen per dataset and variant).
 
+Detection mode (fault_detection experiment)
+    python plot_results.py --detection results/figures/detection.csv --out results/figures
+writes detection_auc.csv (healthy-vs-faulty AUC for each statistic, overall and
+per fault class), window_accuracy.csv, fig_detection and fig_window_accuracy.
+
 Every input file is optional; a figure whose CSV is missing is skipped.
 """
 
@@ -434,6 +439,133 @@ def fig_ablation(root, expected_map):
 
 
 # ---------------------------------------------------------------------------
+#  Detection: healthy vs faulty across many CWRU segments
+# ---------------------------------------------------------------------------
+DETECTION_STATS = [
+    ("kurtosis",       "kurtosis (baseline)"),
+    ("rms",            "RMS (baseline)"),
+    ("contrast_raw",   "contrast at chosen m"),
+    ("contrast_corr",  "contrast - phase surrogate, chosen m"),
+    ("land_raw_mean",  "raw contrast, mean over m"),
+    ("land_corr_mean", "contrast - surrogate, mean over m"),
+]
+CLASS_ORDER = ["Normal", "IR", "OR", "B"]
+
+
+def auc(pos, neg):
+    """P(score_pos > score_neg) + 0.5 P(tie): Mann-Whitney AUC, higher = fault."""
+    pos = np.asarray(pos, float)
+    neg = np.asarray(neg, float)
+    pos, neg = pos[np.isfinite(pos)], neg[np.isfinite(neg)]
+    if len(pos) == 0 or len(neg) == 0:
+        return np.nan
+    diff = pos[:, None] - neg[None, :]
+    return float(((diff > 0).sum() + 0.5 * (diff == 0).sum()) / diff.size)
+
+
+def detection(path, out):
+    rows, _ = read_csv(path)
+    if not rows:
+        print(f"[detection] nothing in {path}")
+        return
+    os.makedirs(out, exist_ok=True)
+    cls = np.array([r["cls"] for r in rows])
+    normal = cls == "Normal"
+    fault_classes = [c for c in CLASS_ORDER[1:] if (cls == c).any()]
+
+    # AUC table
+    table = []
+    for key, label in DETECTION_STATS:
+        if key not in rows[0]:
+            continue
+        v = col(rows, key)
+        row = {"statistic": key, "description": label,
+               "n_normal": int(normal.sum()), "n_fault": int((~normal).sum()),
+               "auc_all_faults": round(auc(v[~normal], v[normal]), 4)}
+        for c in fault_classes:
+            row[f"auc_{c}"] = round(auc(v[cls == c], v[normal]), 4)
+        table.append(row)
+    path_auc = os.path.join(out, "detection_auc.csv")
+    with open(path_auc, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(table[0].keys()))
+        w.writeheader()
+        w.writerows(table)
+    print(f"  wrote {path_auc}")
+
+    # Strip plots: one panel per statistic, x = class
+    stats = [(k, l) for k, l in DETECTION_STATS if k in rows[0]]
+    ncol = 3
+    nrow = int(np.ceil(len(stats) / ncol))
+    fig, axes = plt.subplots(nrow, ncol, figsize=(3.0 * ncol, 2.5 * nrow), squeeze=False)
+    rng = np.random.default_rng(0)
+    classes = [c for c in CLASS_ORDER if (cls == c).any()]
+    for ax, (key, label) in zip(axes.flat, stats):
+        v = col(rows, key)
+        for i, c in enumerate(classes):
+            y = v[cls == c]
+            x = i + rng.uniform(-0.18, 0.18, len(y))
+            ax.plot(x, y, "o", ms=4, color=INK2 if c == "Normal" else BLUE,
+                    alpha=0.7, mec="white", mew=0.5)
+            med = np.nanmedian(y)
+            ax.plot([i - 0.28, i + 0.28], [med, med], color=INK, lw=1.5)
+        a = next(t["auc_all_faults"] for t in table if t["statistic"] == key)
+        ax.set_title(f"{label}\nAUC healthy vs fault = {a:.2f}", loc="left", fontsize=8)
+        ax.set_xticks(range(len(classes)), classes)
+        ax.grid(axis="x", visible=False)
+    for ax in list(axes.flat)[len(stats):]:
+        ax.axis("off")
+    fig.suptitle("Healthy vs faulty: CWRU 12k drive end, 6000-sample segments "
+                 "(bar = median)", x=0.01, ha="left", fontsize=10)
+    fig.tight_layout()
+    save(fig, out, "fig_detection")
+
+    # Window accuracy for classes with an expected window (IR, OR)
+    exp = col(rows, "expected_m")
+    best = col(rows, "best_m")
+    has = np.isfinite(exp)
+    if has.any():
+        acc = []
+        keys = sorted({(r["cls"], r["size"], r["load"]) for r, h in zip(rows, has) if h},
+                      key=lambda k: (k[0], int(k[1]), int(k[2])))
+        for c, size, load in keys:
+            sel = has & (cls == c) & (np.array([r["size"] for r in rows]) == size) \
+                  & (np.array([r["load"] for r in rows]) == load)
+            e = exp[sel][0]
+            acc.append({"cls": c, "size": size, "load": load, "expected_m": int(e),
+                        "best_m_values": " ".join(str(int(b)) for b in best[sel]),
+                        "median_abs_error": float(np.median(np.abs(best[sel] - e))),
+                        "within_5pct": float(np.mean(np.abs(best[sel] - e) <= 0.05 * e))})
+        path_acc = os.path.join(out, "window_accuracy.csv")
+        with open(path_acc, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=list(acc[0].keys()))
+            w.writeheader()
+            w.writerows(acc)
+        print(f"  wrote {path_acc}")
+
+        rel = np.abs(best[has] - exp[has]) / exp[has]
+        fig, ax = plt.subplots(figsize=(4.4, 3.6))
+        lo = 0.85 * min(np.nanmin(exp[has]), np.nanmin(best[has]))
+        hi = 1.08 * max(np.nanmax(exp[has]), np.nanmax(best[has]))
+        ax.plot([lo, hi], [lo, hi], color=INK2, lw=1, ls="--")
+        ax.annotate("selected = expected", (hi, hi), xytext=(-4, -10), textcoords="offset points",
+                    ha="right", fontsize=7, color=INK2)
+        for c, color in (("IR", BLUE), ("OR", ORANGE)):
+            sel = has & (cls == c)
+            if sel.any():
+                jitter = rng.uniform(-0.8, 0.8, sel.sum())
+                ax.plot(exp[sel] + jitter, best[sel], "o", ms=5, color=color, alpha=0.75,
+                        mec="white", mew=0.5, label=f"{c} (n={sel.sum()})")
+        ax.set_xlim(lo, hi)
+        ax.set_ylim(lo, hi)
+        ax.set_xlabel("expected window (samples, from file RPM)")
+        ax.set_ylabel("window selected by the pipeline")
+        ax.set_title(f"Window accuracy: median error {100 * np.median(rel):.1f}%, "
+                     f"{100 * np.mean(rel <= 0.05):.0f}% within 5%", loc="left", fontsize=9)
+        ax.legend(loc="upper left")
+        save(fig, out, "fig_window_accuracy")
+
+
+# ---------------------------------------------------------------------------
 #  Cross-dataset comparison
 # ---------------------------------------------------------------------------
 def fig_comparison(dirs, out, expected_map):
@@ -516,6 +648,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("dirs", nargs="*", help="ga_stomp output directories")
+    ap.add_argument("--detection", metavar="CSV",
+                    help="detection.csv from the fault_detection experiment")
     ap.add_argument("--ablation", metavar="ROOT",
                     help="ROOT/<variant>/<dataset>/ layout: write ablation.csv + fig_ablation")
     ap.add_argument("--expected", nargs="*", metavar="NAME=M",
@@ -543,8 +677,12 @@ def main():
         print("[ablation]")
         fig_ablation(args.ablation, expected)
 
-    if not args.dirs and not args.ablation:
-        ap.error("give result directories and/or --ablation ROOT")
+    if args.detection:
+        print("[detection]")
+        detection(args.detection, args.out)
+
+    if not args.dirs and not args.ablation and not args.detection:
+        ap.error("give result directories, --ablation ROOT or --detection CSV")
 
     if len(args.dirs) >= 2:
         print("[comparison]")

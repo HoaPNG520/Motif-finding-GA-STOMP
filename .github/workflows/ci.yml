@@ -89,6 +89,9 @@ jobs:
           test -f /tmp/mock/IR007/figures/fig_landscape.png
           python plot_results.py --ablation /tmp/mock/ablation --expected IR007=74 OR007=112
           test -f /tmp/mock/ablation/figures/fig_ablation.png
+          python plot_results.py --detection /tmp/mock/detection/detection.csv --out /tmp/mock/detection
+          test -f /tmp/mock/detection/detection_auc.csv
+          test -f /tmp/mock/detection/fig_window_accuracy.png
 
   kaggle:
     needs: [build, python]
