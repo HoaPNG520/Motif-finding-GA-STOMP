@@ -1,0 +1,2 @@
+input,n,best_m,best_ez,best_k,fitness,contrast,regularity,period_reward,detected_period,band_min,band_max,sampling_rate,top_motif_idx,true_m,true_pos1,wall_ms,w_contrast,w_regularity,w_period,period_bias_init,null,contrast_raw,contrast_null
+/tmp/ga_data/OR007.csv,6000,188,0.7321,20,0.428303,0.428303,0.298189,0.001864,110,40,240,12000,927,0,-1,2768.56,1.000,0.000,0.000,0,shuffle,0.472083,0.043781

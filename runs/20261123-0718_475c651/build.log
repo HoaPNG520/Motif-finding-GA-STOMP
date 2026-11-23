@@ -1,0 +1,21 @@
+make: Entering directory '/tmp/GA_STOMP'
+mkdir -p obj
+nvcc -std=c++17 -arch=sm_75 -Iinclude --expt-relaxed-constexpr --generate-line-info -O3 -DNDEBUG -MMD -MP -c -o obj/main.o src/main.cu
+nvcc -std=c++17 -arch=sm_75 -Iinclude --expt-relaxed-constexpr --generate-line-info -O3 -DNDEBUG -MMD -MP -c -o obj/stomp.o src/stomp.cu
+nvcc -std=c++17 -arch=sm_75 -Iinclude --expt-relaxed-constexpr --generate-line-info -O3 -DNDEBUG -MMD -MP -c -o obj/utils.o src/utils.cu
+nvcc -std=c++17 -arch=sm_75 -Iinclude --expt-relaxed-constexpr --generate-line-info -O3 -DNDEBUG -MMD -MP -c -o obj/fitness.o src/fitness.cu
+nvcc -std=c++17 -arch=sm_75 -Iinclude --expt-relaxed-constexpr --generate-line-info -O3 -DNDEBUG -MMD -MP -c -o obj/ga.o src/ga.cu
+nvcc -std=c++17 -arch=sm_75 -Iinclude --expt-relaxed-constexpr --generate-line-info -O3 -DNDEBUG -MMD -MP -c -o obj/io.o src/io.cu
+nvcc -std=c++17 -arch=sm_75 -Iinclude --expt-relaxed-constexpr --generate-line-info -O3 -DNDEBUG -MMD -MP -c -o obj/timer.o src/timer.cu
+nvcc -std=c++17 -arch=sm_75 -Iinclude --expt-relaxed-constexpr --generate-line-info -O3 -DNDEBUG -MMD -MP -c -o obj/config.o src/config.cu
+nvcc -std=c++17 -arch=sm_75 -Iinclude --expt-relaxed-constexpr --generate-line-info -O3 -DNDEBUG -MMD -MP -c -o obj/benchmark.o src/benchmark.cu
+nvcc -std=c++17 -arch=sm_75 -Iinclude --expt-relaxed-constexpr --generate-line-info -O3 -DNDEBUG -MMD -MP -c -o obj/surrogate.o src/surrogate.cu
+nvcc -std=c++17 -arch=sm_75 -Iinclude --expt-relaxed-constexpr --generate-line-info -O3 -DNDEBUG -o ga_stomp obj/main.o obj/stomp.o obj/utils.o obj/fitness.o obj/ga.o obj/io.o obj/timer.o obj/config.o obj/benchmark.o obj/surrogate.o -lm
+---------------------------------------------------
+  Built: ga_stomp
+  Run:   ./ga_stomp [config.ini]
+  Run:   ./ga_stomp [n] [true_m] [pop] [gens]
+  Run:   ./ga_stomp --help
+---------------------------------------------------
+make: Leaving directory '/tmp/GA_STOMP'
+

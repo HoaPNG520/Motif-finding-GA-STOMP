@@ -1,0 +1,2 @@
+input,n,best_m,best_ez,best_k,fitness,contrast,regularity,period_reward,detected_period,band_min,band_max,sampling_rate,top_motif_idx,true_m,true_pos1,wall_ms,w_contrast,w_regularity,w_period,period_bias_init,null,contrast_raw,contrast_null
+/tmp/ga_data/Normal.csv,6000,150,0.5078,6,-0.030335,-0.030335,0.000000,0.923569,163,40,240,12000,2812,0,-1,2832.15,1.000,0.000,0.000,0,phase,0.042393,0.072728
