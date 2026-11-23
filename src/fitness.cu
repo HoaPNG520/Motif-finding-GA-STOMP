@@ -288,9 +288,12 @@ FitnessScore evaluate_fitness(
     int                  profile_len,
     const Individual    &ind,
     int                  detected_period,   // -1 = no period reward
-    const FitnessWeights &w)
+    const FitnessWeights &w,
+    const float         *null_mp)
 {
     FitnessScore fs{};
+    fs.contrast_null   = NAN;
+    fs.regularity_null = NAN;
 
     if (profile_len <= 0 || mp == nullptr)
     {
@@ -318,8 +321,29 @@ FitnessScore evaluate_fitness(
     mean_mp /= (float)n_valid;
 
     // --- Signals -------------------------------------------------------------
-    fs.contrast = compute_contrast(mp, profile_len, ind.window_size,
-                                   ind.min_motif_count, mean_mp);
+    fs.contrast_raw = compute_contrast(mp, profile_len, ind.window_size,
+                                       ind.min_motif_count, mean_mp);
+    fs.contrast = fs.contrast_raw;
+
+    // Null correction: subtract what the same window gets on a surrogate with
+    // the repeating structure destroyed.  Signed (can be < 0) so the GA still
+    // has a gradient where real and surrogate are close.
+    if (null_mp != nullptr)
+    {
+        float null_mean = 0.0f;
+        int   null_valid = 0;
+        for (int i = 0; i < profile_len; i++)
+            if (mp_valid(null_mp[i])) { null_mean += null_mp[i]; null_valid++; }
+        if (null_valid > 1)
+        {
+            null_mean /= (float)null_valid;
+            fs.contrast_null = compute_contrast(null_mp, profile_len, ind.window_size,
+                                                ind.min_motif_count, null_mean);
+            compute_spacing_regularity(null_mp, profile_len, ind.window_size,
+                                       fs.regularity_null);
+            fs.contrast = fs.contrast_raw - fs.contrast_null;
+        }
+    }
     compute_spacing_regularity(mp, profile_len, ind.window_size, fs.spacing_regularity);
 
     if (detected_period > 0)

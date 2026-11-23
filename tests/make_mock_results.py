@@ -23,7 +23,8 @@ def make(d, period, n=800, synth=False):
     mm=np.arange(20,201,5)
     reg=np.clip(1-np.abs(mm-30)/60,0,1); con=0.2+0.1*np.sin(mm/20); per=np.exp(-0.5*((mm-period)/(0.2*period))**2)
     comp=0.2*con+0.3*reg+0.5*per
-    open(f"{d}/landscape.csv","w").write(f"# detected_period = {period+2}\nm,composite,contrast,regularity,period_reward\n"+"".join(f"{a},{b:.4f},{c:.4f},{e:.4f},{g:.4f}\n" for a,b,c,e,g in zip(mm,comp,con,reg,per)))
+    nul=0.15+0.0015*mm
+    open(f"{d}/landscape.csv","w").write(f"# detected_period = {period+2}\n# null = phase\nm,composite,contrast,regularity,period_reward,contrast_raw,contrast_null,regularity_null\n"+"".join(f"{a},{b:.4f},{c-n:.4f},{e:.4f},{g:.4f},{c:.4f},{n:.4f},nan\n" for a,b,c,e,g,n in zip(mm,comp,con,reg,per,nul)))
     if synth:
         mm=np.arange(30,200,10); fit=np.exp(-((mm-80)/30)**2); rec=(abs(mm-80)<=20).astype(float)
         open(f"{d}/sweep.csv","w").write("# Spearman rho = 0.8123\nm,fitness,recall,top_dist,regularity,consistency,contrast\n"+"".join(f"{a},{b:.4f},{c:.1f},1,1,1,1\n" for a,b,c in zip(mm,fit,rec)))

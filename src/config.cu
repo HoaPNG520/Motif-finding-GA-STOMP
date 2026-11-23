@@ -105,6 +105,12 @@ bool load_config(const char* path, FullConfig* out)
         else if (!strcmp(key, "w_period"))          out->ga.weights.period     = (float)atof(val);
         else if (!strcmp(key, "period_bias_init"))  out->ga.period_bias_init   = (atoi(val) != 0);
         else if (!strcmp(key, "landscape_step"))    out->landscape_step        = atoi(val);
+        else if (!strcmp(key, "null_correct"))      out->ga.null_correct       = (atoi(val) != 0);
+        else if (!strcmp(key, "null_seed"))         out->ga.null_seed          = (unsigned int)strtoul(val, nullptr, 10);
+        else if (!strcmp(key, "null_surrogate")) {
+            if (!parse_surrogate_kind(val, &out->ga.null_kind))
+                fprintf(stderr, "[config] null_surrogate must be 'shuffle' or 'phase', got '%s'\n", val);
+        }
         else if (!strcmp(key, "input_path"))  strncpy(out->input_path,  val, 511);
         else if (!strcmp(key, "output_dir"))  strncpy(out->output_dir,  val, 511);
         else fprintf(stderr, "[config] Unknown key '%s' -- ignored\n", key);
@@ -147,6 +153,9 @@ void save_config(const char* path, const FullConfig& fc)
     fprintf(fp, "w_period      = %.3f\n", fc.ga.weights.period);
     fprintf(fp, "period_bias_init = %d\n", fc.ga.period_bias_init ? 1 : 0);
     fprintf(fp, "landscape_step = %d\n", fc.landscape_step);
+    fprintf(fp, "null_correct  = %d\n", fc.ga.null_correct ? 1 : 0);
+    fprintf(fp, "null_surrogate = %s\n", surrogate_kind_name(fc.ga.null_kind));
+    fprintf(fp, "null_seed     = %u\n", fc.ga.null_seed);
     if (fc.input_path[0]) fprintf(fp, "input_path    = %s\n", fc.input_path);
     fprintf(fp, "output_dir    = %s\n",  fc.output_dir);
     fclose(fp);
@@ -181,6 +190,8 @@ void print_config(const FullConfig& fc)
     printf("|  weights        : contrast %.2f  regularity %.2f  period %.2f  (biased init %s)\n",
            fc.ga.weights.contrast, fc.ga.weights.regularity, fc.ga.weights.period,
            fc.ga.period_bias_init ? "on" : "off");
+    printf("|  null contrast  : %s\n",
+           fc.ga.null_correct ? surrogate_kind_name(fc.ga.null_kind) : "off");
     printf("|  input_path     : %s\n", fc.input_path[0] ? fc.input_path : "(synthetic)");
     printf("|  output_dir     : %s\n", fc.output_dir);
     printf("+--------------------------------------------------------------+\n\n");

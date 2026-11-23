@@ -40,7 +40,8 @@ SRCS := $(SRC_DIR)/main.cu    \
         $(SRC_DIR)/io.cu      \
         $(SRC_DIR)/timer.cu   \
         $(SRC_DIR)/config.cu  \
-        $(SRC_DIR)/benchmark.cu
+        $(SRC_DIR)/benchmark.cu \
+        $(SRC_DIR)/surrogate.cu
 
 OBJS := $(patsubst $(SRC_DIR)/%.cu, $(OBJ_DIR)/%.o, $(SRCS))
 

@@ -138,6 +138,7 @@ static FitnessScore evaluate_individual(
     float approx_frac,
     int detected_period,  // FFT-detected period for reward signal
     const FitnessWeights &weights,
+    const float *h_null,  // surrogate series or nullptr
     TimingReport &timing)
 {
     STOMPConfig scfg;
@@ -154,16 +155,28 @@ static FitnessScore evaluate_individual(
     timing.precompute_total_ms += res.precompute_ms;
     timing.n_stomp_calls++;
 
+    STOMPResult null_res{};
+    if (h_null)
+    {
+        null_res = run_stomp(h_null, n, scfg);
+        timing.stomp_total_ms += null_res.kernel_ms;
+        timing.precompute_total_ms += null_res.precompute_ms;
+        timing.n_stomp_calls++;
+    }
+
     FitnessScore fs{};
     if (res.mp)
     {
         WallTimer ft;
         ft.start();
-        fs = evaluate_fitness(res.mp, res.profile_len, ind, detected_period, weights);
+        fs = evaluate_fitness(res.mp, res.profile_len, ind, detected_period, weights,
+                              null_res.mp);
         timing.fitness_total_ms += ft.stop();
         free(res.mp);
         free(res.mpi);
     }
+    free(null_res.mp);
+    free(null_res.mpi);
     ind.fitness = fs.composite;
     return fs;
 }
@@ -190,6 +203,7 @@ GAResult run_ga(
     printf("|  weights        : contrast %.2f  regularity %.2f  period %.2f\n",
            cfg.weights.contrast, cfg.weights.regularity, cfg.weights.period);
     printf("|  FFT-biased init: %s\n", cfg.period_bias_init ? "on" : "off");
+    printf("|  null contrast  : %s\n", cfg.null_correct ? surrogate_kind_name(cfg.null_kind) : "off");
     printf("+--------------------------------------------------------------+\n\n");
 
     // =========================================================================
@@ -296,6 +310,18 @@ GAResult run_ga(
     }
 
     // Initialise population
+    // Surrogate for null-corrected contrast (same for every individual)
+    std::vector<float> null_series;
+    const float *h_null = nullptr;
+    if (cfg.null_correct)
+    {
+        null_series.resize(n);
+        make_surrogate(h_T, n, cfg.null_kind, cfg.null_seed, null_series.data());
+        h_null = null_series.data();
+        printf("[null] %s surrogate (seed %u): contrast is scored as real - surrogate\n",
+               surrogate_kind_name(cfg.null_kind), cfg.null_seed);
+    }
+
     std::vector<Individual> pop(cfg.population_size);
     for (int i = 0; i < cfg.population_size; i++)
         pop[i] = random_individual(cfg, seed + (unsigned)i * 31337, detected_period);
@@ -319,7 +345,8 @@ GAResult run_ga(
         // Evaluate population
         std::vector<FitnessScore> scores(cfg.population_size);
         for (int i = 0; i < cfg.population_size; i++)
-            scores[i] = evaluate_individual(pop[i], h_T, n, cfg.approx_frac, detected_period, cfg.weights, timing);
+            scores[i] = evaluate_individual(pop[i], h_T, n, cfg.approx_frac, detected_period, cfg.weights,
+                                            h_null, timing);
 
         // Sort descending
         std::vector<int> idx(cfg.population_size);
@@ -366,7 +393,7 @@ GAResult run_ga(
     // Final evaluation with full STOMP + MPI recovery
     for (auto &ind : pop)
         if (ind.fitness < 0.0f)
-            evaluate_individual(ind, h_T, n, 1.0f, detected_period, cfg.weights, timing);
+            evaluate_individual(ind, h_T, n, 1.0f, detected_period, cfg.weights, h_null, timing);
 
     std::sort(pop.begin(), pop.end(), [](const Individual &a, const Individual &b)
               { return a.fitness > b.fitness; });
@@ -385,10 +412,14 @@ GAResult run_ga(
     best_cfg.recover_indices = false;
 
     STOMPResult best_res = run_stomp(h_T, n, best_cfg);
+    STOMPResult best_null{};
+    if (h_null) best_null = run_stomp(h_null, n, best_cfg);
     result.best_fitness = evaluate_fitness(best_res.mp, best_res.profile_len, pop[0],
-                                           detected_period, cfg.weights);
+                                           detected_period, cfg.weights, best_null.mp);
     free(best_res.mp);
     free(best_res.mpi);
+    free(best_null.mp);
+    free(best_null.mpi);
 
     printf("\n+--------------------------------------------------------------+\n");
     printf("|                   OPTIMISATION RESULT                       |\n");

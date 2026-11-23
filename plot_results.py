@@ -292,28 +292,47 @@ def fig_landscape(d, out, expected):
     if not rows:
         return
     m = col(rows, "m", int)
-    period = None
+    period, null = None, "off"
     for c in comments:
         if c.startswith("detected_period"):
             try:
                 period = int(c.split("=")[-1])
             except ValueError:
                 pass
-    panels = [("composite", "composite"), ("contrast", "contrast"),
-              ("regularity", "regularity"), ("period_reward", "period reward")]
-    # Small multiples, one y-axis each; every signal is in [0, 1].
-    fig, axes = plt.subplots(len(panels), 1, figsize=(5.2, 5.6), sharex=True,
-                             gridspec_kw={"hspace": 0.35})
-    for ax, (key, label) in zip(axes, panels):
-        y = col(rows, key)
-        ax.plot(m, y, color=BLUE)
-        best = int(np.nanargmax(y))
-        ax.plot([m[best]], [y[best]], "o", ms=5, color=BLUE, mec="white", mew=1)
-        ax.annotate(f"max at m={m[best]}", (m[best], y[best]), xytext=(5, -2),
-                    textcoords="offset points", va="top", fontsize=7, color=INK2)
+        if c.startswith("null"):
+            null = c.split("=")[-1].strip()
+    has_null = "contrast_null" in rows[0] and np.isfinite(col(rows, "contrast_null")).any()
+
+    # (key(s), title).  One y-axis per panel; a panel with two keys is raw vs null.
+    panels = [(("composite",), "composite")]
+    if has_null:
+        panels += [(("contrast_raw", "contrast_null"), f"contrast: real vs {null} surrogate"),
+                   (("contrast",), "contrast - surrogate (used in fitness)")]
+    else:
+        panels += [(("contrast",), "contrast")]
+    panels += [(("regularity",), "regularity"), (("period_reward",), "period reward")]
+
+    height = 1.4 * len(panels) + 0.6
+    fig, axes = plt.subplots(len(panels), 1, figsize=(5.2, height),
+                             sharex=True, gridspec_kw={"hspace": 0.45})
+    fig.subplots_adjust(top=1 - 0.65 / height)   # room for the FFT/expected labels
+    for ax, (keys, label) in zip(axes, panels):
+        lo, hi = 0.0, 1.0
+        for key, color, name in zip(keys, (BLUE, ORANGE), ("real", "surrogate")):
+            y = col(rows, key)
+            ax.plot(m, y, color=color, label=name if len(keys) > 1 else None)
+            lo, hi = min(lo, np.nanmin(y)), max(hi, np.nanmax(y))
+            if key == keys[0]:
+                best = int(np.nanargmax(y))
+                ax.plot([m[best]], [y[best]], "o", ms=5, color=color, mec="white", mew=1)
+                ax.annotate(f"max at m={m[best]}", (m[best], y[best]), xytext=(5, -2),
+                            textcoords="offset points", va="top", fontsize=7, color=INK2)
+        if len(keys) > 1:
+            ax.legend(loc="upper left", ncol=2, fontsize=7)
+        if lo < 0:
+            ax.axhline(0, color=INK2, lw=0.8)
         ax.set_title(label, loc="left", fontsize=8, pad=2)
-        lo, hi = np.nanmin(y), np.nanmax(y)
-        ax.set_ylim(min(0, lo), max(1.0, hi) * 1.08)
+        ax.set_ylim(lo - 0.05 * (hi - lo), hi + 0.12 * (hi - lo))
         if period and period > 0:
             ax.axvline(period, color=ORANGE, ls="--", lw=1.2)
         if expected:
@@ -327,14 +346,15 @@ def fig_landscape(d, out, expected):
         top.annotate(f"expected {expected}", (expected, ytxt), xytext=(3, 10),
                      textcoords="offset points", fontsize=7, color=INK2, annotation_clip=False)
     axes[-1].set_xlabel("window size m")
-    fig.suptitle(f"Fitness landscape -- {ds_name(d)}", x=0.02, ha="left", fontsize=10, y=0.99)
+    fig.suptitle(f"Fitness landscape -- {ds_name(d)}", x=0.02, ha="left", fontsize=10, y=0.995)
     save(fig, out, "fig_landscape")
 
 
 # ---------------------------------------------------------------------------
 #  Ablation: root/<variant>/<dataset>/summary.csv
 # ---------------------------------------------------------------------------
-VARIANT_ORDER = ["full", "no_period", "no_regularity", "no_contrast"]
+VARIANT_ORDER = ["full", "no_period", "no_regularity", "no_contrast",
+                 "contrast_raw", "null_shuffle", "null_phase"]
 
 
 def fig_ablation(root, expected_map):
@@ -362,6 +382,8 @@ def fig_ablation(root, expected_map):
                 "regularity": s["regularity"], "period_reward": s["period_reward"],
                 "w_contrast": s.get("w_contrast", ""), "w_regularity": s.get("w_regularity", ""),
                 "w_period": s.get("w_period", ""), "period_bias_init": s.get("period_bias_init", ""),
+                "null": s.get("null", ""), "contrast_raw": s.get("contrast_raw", ""),
+                "contrast_null": s.get("contrast_null", ""),
             })
     if not table:
         print(f"[ablation] no <variant>/<dataset>/summary.csv under {root}")
@@ -405,7 +427,7 @@ def fig_ablation(root, expected_map):
     ax.set_xticks(x, datasets)
     ax.grid(axis="x", visible=False)
     ax.set_ylabel("selected window m (samples)")
-    ax.set_title("Ablation: window chosen with each fitness term removed", loc="left")
+    ax.set_title("Window chosen by each fitness variant", loc="left")
     ax.legend(ncol=k + has_expected, loc="upper left", bbox_to_anchor=(0, -0.12))
     ax.margins(x=0.08)
     save(fig, out, "fig_ablation")

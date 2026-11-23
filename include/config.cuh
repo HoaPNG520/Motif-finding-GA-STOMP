@@ -28,6 +28,9 @@
 //    w_period     = 0.50
 //    period_bias_init = 1  # 0 = don't seed the population around the FFT period
 //    landscape_step   = 0  # >0 writes landscape.csv: signals for every m step
+//    null_correct     = 0  # 1 = contrast scored as real - surrogate
+//    null_surrogate   = phase   # phase | shuffle
+//    null_seed        = 12345
 //  Missing keys fall back to GAConfig defaults.
 //  Unknown keys are ignored with a warning.
 // =============================================================================

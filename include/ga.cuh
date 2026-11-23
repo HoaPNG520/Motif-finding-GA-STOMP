@@ -15,6 +15,7 @@
 #include "common.cuh"
 #include "fitness.cuh"
 #include "timer.cuh"
+#include "surrogate.cuh"
 #include <vector>
 
 // -----------------------------------------------------------------------------
@@ -57,6 +58,14 @@ struct GAConfig
     // leaks in through initialisation.
     FitnessWeights weights;
     bool  period_bias_init  = true;
+
+    // Null-corrected contrast: contrast(real) - contrast(surrogate), with the
+    // surrogate's MP computed under the same STOMP config as each individual.
+    // Doubles the STOMP calls.  The surrogate is rebuilt from null_seed in
+    // every run_ga call, so all seeds / repeats share the same null.
+    bool          null_correct = false;
+    SurrogateKind null_kind    = SurrogateKind::Phase;
+    unsigned int  null_seed    = 12345u;
 
     bool verbose = true;
 };

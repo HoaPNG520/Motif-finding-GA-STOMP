@@ -36,8 +36,12 @@ struct Individual
 
 struct FitnessScore
 {
-    float composite;            // final weighted score ∈ [0, 1]
-    float contrast;             // Signal 1: motif distinctiveness
+    float composite;            // final weighted score
+    float contrast;             // Signal 1 as used in the composite:
+                                //   raw, or raw - null when a null MP is given
+    float contrast_raw;         // contrast of the real series
+    float contrast_null;        // contrast of the surrogate (NAN if none)
+    float regularity_null;      // regularity of the surrogate (NAN if none; logged only)
     float spacing_regularity;   // Signal 2: periodic recurrence of top-N motifs
     float period_reward;        // Signal 3: Gaussian reward around detected period
     float count_score;          // legacy field (computed but not used in composite)
@@ -65,6 +69,9 @@ FitnessScore evaluate_fitness(
     int                   profile_len,
     const Individual     &ind,
     int                   detected_period = -1,          // -1 = no period reward
-    const FitnessWeights &w = FitnessWeights());
+    const FitnessWeights &w = FitnessWeights(),
+    const float          *null_mp = nullptr);            // surrogate MP, same config
+                                                         // and length; enables
+                                                         // contrast - contrast_null
 
 void print_fitness(const Individual &ind, const FitnessScore &fs);

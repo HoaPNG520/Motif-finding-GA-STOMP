@@ -767,6 +767,13 @@ period_bias_init=1
 # >0: after the GA, evaluate every signal for m = m_min, m_min+step, ... and
 # write landscape.csv
 landscape_step=5
+# Null-corrected contrast: score contrast as real minus a surrogate copy of the
+# series with the repeating structure destroyed (shuffle = random permutation;
+# phase = Fourier phase randomisation, keeps the power spectrum). Removes the
+# part of contrast a window gets just for its length. Doubles STOMP calls.
+null_correct=0
+null_surrogate=phase
+null_seed=12345
 input_path=data/IR007_1797.csv
 output_dir=results/IR007
 ```
@@ -880,14 +887,19 @@ Every Kaggle run is committed to the `results` branch as `runs/<UTC time>_<sha7>
 to `INDEX.csv` and the folder name written to `LATEST`. Fetch it with
 `git fetch origin results && git checkout results`.
 
-The notebook runs four fitness variants on each signal:
+The notebook runs one experiment (`EXPERIMENT` in its settings cell), four fitness
+variants on each signal:
 
-| Variant | Config change |
-|---------|---------------|
-| `full` | defaults (0.20 / 0.30 / 0.50) |
-| `no_period` | `w_period=0`, `period_bias_init=0` |
-| `no_regularity` | `w_regularity=0` |
-| `no_contrast` | `w_contrast=0` |
+| Experiment | Variant | Config change |
+|------------|---------|---------------|
+| `ablation` | `full` | defaults (0.20 / 0.30 / 0.50) |
+| | `no_period` | `w_period=0`, `period_bias_init=0` |
+| | `no_regularity` | `w_regularity=0` |
+| | `no_contrast` | `w_contrast=0` |
+| `null_contrast` (default) | `full` | defaults |
+| | `contrast_raw` | contrast only, no FFT term or seeding |
+| | `null_shuffle` | as above, contrast minus a shuffled copy |
+| | `null_phase` | as above, contrast minus a phase-randomised copy |
 
 `results/figures/ablation.csv` and `fig_ablation` compare the window each variant
 selects; each run's `fig_landscape` shows every signal against m.
