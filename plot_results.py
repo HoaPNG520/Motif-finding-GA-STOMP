@@ -29,6 +29,13 @@ Detection mode (fault_detection experiment)
 writes detection_auc.csv (healthy-vs-faulty AUC for each statistic, overall and
 per fault class), window_accuracy.csv, fig_detection and fig_window_accuracy.
 
+Band comparison (band_compare experiment)
+    python plot_results.py --window-compare results/figures/detection.csv --out results/figures
+writes band_compare.csv (share within 5% of the expected window per fault type,
+size and variant), fft_lock.csv (what the FFT period matched: own fault
+frequency, the other fault type, a shaft harmonic, or none),
+fig_band_compare and fig_band_accuracy.
+
 Every input file is optional; a figure whose CSV is missing is skipped.
 """
 
@@ -566,6 +573,135 @@ def detection(path, out):
 
 
 # ---------------------------------------------------------------------------
+#  Band comparison: window accuracy per FFT search band
+# ---------------------------------------------------------------------------
+def classify_lock(period, rpm, cls, fs, tol=0.05):
+    """What the FFT period matches: 'own fault', 'other fault', 'shaft kx', 'none'."""
+    if not np.isfinite(period) or period <= 0:
+        return "none"
+    shaft_hz = rpm / 60.0
+    own = FAULT_ORDERS.get(cls)
+    other = FAULT_ORDERS["OR" if cls == "IR" else "IR"]
+    if own and abs(period - fs / (own * shaft_hz)) <= tol * fs / (own * shaft_hz):
+        return "own fault"
+    if abs(period - fs / (other * shaft_hz)) <= tol * fs / (other * shaft_hz):
+        return "other fault"
+    for k in range(1, 5):
+        ref = fs / (k * shaft_hz)
+        if abs(period - ref) <= tol * ref:
+            return f"shaft {k}x"
+    return "none"
+
+
+FAULT_ORDERS = {"IR": 5.4152, "OR": 3.5848}
+
+
+def window_compare(path, out, fs=12000):
+    rows, _ = read_csv(path)
+    rows = [r for r in rows if r.get("expected_m")]
+    if not rows:
+        print(f"[window-compare] no rows with expected_m in {path}")
+        return
+    os.makedirs(out, exist_ok=True)
+    variants = list(dict.fromkeys(r["variant"] for r in rows))
+    groups = [(c, sz) for c in ("IR", "OR") for sz in ("7", "14", "21")]
+
+    def stats(sel):
+        e = np.array([float(r["expected_m"]) for r in sel])
+        b = np.array([float(r["best_m"]) for r in sel])
+        rel = np.abs(b - e) / e
+        return len(sel), float(np.mean(rel <= 0.05)), float(np.median(rel))
+
+    table = []
+    for c, sz in groups + [("all", "")]:
+        row = {"fault": f"{c}{int(sz):03d}" if sz else "all IR+OR"}
+        for v in variants:
+            sel = [r for r in rows if r["variant"] == v and
+                   (c == "all" or (r["cls"] == c and r["size"] == sz))]
+            if not sel:
+                continue
+            n, w5, med = stats(sel)
+            row["n"] = n
+            row[f"within5_{v}"] = round(w5, 3)
+            row[f"median_rel_err_{v}"] = round(med, 4)
+            b = sel[0]
+            row[f"band_samples_{v}"] = f"{b.get('band_min', '')}-{b.get('band_max', '')}"
+        table.append(row)
+    path_cmp = os.path.join(out, "band_compare.csv")
+    with open(path_cmp, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(table[0].keys()))
+        w.writeheader()
+        w.writerows(table)
+    print(f"  wrote {path_cmp}")
+
+    locks = []
+    kinds = ["own fault", "other fault", "shaft 1x", "shaft 2x", "shaft 3x", "shaft 4x", "none"]
+    for v in variants:
+        sel = [r for r in rows if r["variant"] == v]
+        lab = [classify_lock(float(r["detected_period"]), float(r["rpm"]), r["cls"], fs)
+               for r in sel]
+        row = {"variant": v, "n": len(sel)}
+        row.update({k: round(lab.count(k) / len(sel), 3) for k in kinds})
+        locks.append(row)
+    path_lock = os.path.join(out, "fft_lock.csv")
+    with open(path_lock, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(locks[0].keys()))
+        w.writeheader()
+        w.writerows(locks)
+    print(f"  wrote {path_lock}")
+
+    # Scatter per variant (colour = fault type), shared axes
+    allv = np.array([float(r[k]) for r in rows for k in ("expected_m", "best_m")])
+    lo, hi = 0.85 * allv.min(), 1.08 * allv.max()
+    fig, axes = plt.subplots(1, len(variants), figsize=(4.2 * len(variants), 3.9),
+                             sharex=True, sharey=True, squeeze=False)
+    rng = np.random.default_rng(0)
+    for ax, v in zip(axes[0], variants):
+        sel = [r for r in rows if r["variant"] == v]
+        ax.plot([lo, hi], [lo, hi], color=INK2, lw=1, ls="--")
+        for c, color in (("IR", BLUE), ("OR", ORANGE)):
+            pts = [r for r in sel if r["cls"] == c]
+            if pts:
+                e = np.array([float(r["expected_m"]) for r in pts])
+                b = np.array([float(r["best_m"]) for r in pts])
+                ax.plot(e + rng.uniform(-0.8, 0.8, len(e)), b, "o", ms=5, color=color,
+                        alpha=0.75, mec="white", mew=0.5, label=f"{c} (n={len(pts)})")
+        n, w5, med = stats(sel)
+        band = f"{sel[0].get('band_min', '')}-{sel[0].get('band_max', '')} samples"
+        ax.set_title(f"{v}  (FFT band {band})\n{100 * w5:.0f}% within 5%, "
+                     f"median error {100 * med:.1f}%", loc="left", fontsize=8)
+        ax.set_xlim(lo, hi)
+        ax.set_ylim(lo, hi)
+        ax.set_xlabel("expected window (samples)")
+        ax.legend(loc="lower right")
+    axes[0][0].set_ylabel("window selected")
+    fig.tight_layout()
+    save(fig, out, "fig_band_compare")
+
+    # Within-5% per fault group, one bar per variant
+    fig, ax = plt.subplots(figsize=(6.4, 3.0))
+    x = np.arange(len(groups))
+    width = 0.8 / len(variants)
+    for i, (v, color) in enumerate(zip(variants, (BLUE, ORANGE, AQUA, YELLOW))):
+        vals = [next((t.get(f"within5_{v}", np.nan) for t in table
+                      if t["fault"] == f"{c}{int(sz):03d}"), np.nan) for c, sz in groups]
+        xs = x - 0.4 + width * (i + 0.5)
+        ax.bar(xs, [100 * val for val in vals], width=width * 0.92, color=color, label=v,
+               edgecolor="white", linewidth=1)
+        for xi, val in zip(xs, vals):
+            if np.isfinite(val):
+                ax.annotate(f"{100 * val:.0f}", (xi, 100 * val), xytext=(0, 2),
+                            textcoords="offset points", ha="center", fontsize=7, color=INK2)
+    ax.set_xticks(x, [f"{c}{int(sz):03d}" for c, sz in groups])
+    ax.set_ylim(0, 112)
+    ax.set_ylabel("% of segments within 5%")
+    ax.grid(axis="x", visible=False)
+    ax.set_title("Window accuracy by fault type and FFT search band", loc="left")
+    ax.legend(ncol=len(variants), loc="upper left", bbox_to_anchor=(0, -0.12))
+    save(fig, out, "fig_band_accuracy")
+
+
+# ---------------------------------------------------------------------------
 #  Cross-dataset comparison
 # ---------------------------------------------------------------------------
 def fig_comparison(dirs, out, expected_map):
@@ -648,6 +784,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("dirs", nargs="*", help="ga_stomp output directories")
+    ap.add_argument("--window-compare", metavar="CSV",
+                    help="detection.csv from the band_compare experiment")
     ap.add_argument("--detection", metavar="CSV",
                     help="detection.csv from the fault_detection experiment")
     ap.add_argument("--ablation", metavar="ROOT",
@@ -681,8 +819,13 @@ def main():
         print("[detection]")
         detection(args.detection, args.out)
 
-    if not args.dirs and not args.ablation and not args.detection:
-        ap.error("give result directories, --ablation ROOT or --detection CSV")
+    if args.window_compare:
+        print("[window-compare]")
+        window_compare(args.window_compare, args.out)
+
+    if not args.dirs and not args.ablation and not args.detection and not args.window_compare:
+        ap.error("give result directories, --ablation ROOT, --detection CSV "
+                 "or --window-compare CSV")
 
     if len(args.dirs) >= 2:
         print("[comparison]")

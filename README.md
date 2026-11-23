@@ -900,7 +900,14 @@ variants on each signal:
 | | `contrast_raw` | contrast only, no FFT term or seeding |
 | | `null_shuffle` | as above, contrast minus a shuffled copy |
 | | `null_phase` | as above, contrast minus a phase-randomised copy |
-| `fault_detection` (default) | `detect` | full pipeline with phase-corrected contrast logged; all 40 CWRU 12k drive-end files (healthy, inner race, outer race, ball; 3 sizes; 4 loads), three 6000-sample segments each |
+| `band_compare` (default) | `band_50_300` | FFT band 50-300 Hz; inner- and outer-race files only, 3 segments each |
+| | `band_geometry` | FFT band 93-178 Hz: lowest BPFO to highest BPFI over 1730-1797 rpm, +-10% (excludes 2x/3x shaft harmonics, uses no per-file labels) |
+| `fault_detection` | `detect` | full pipeline with phase-corrected contrast logged; all 40 CWRU 12k drive-end files (healthy, inner race, outer race, ball; 3 sizes; 4 loads), three 6000-sample segments each |
+
+`band_compare` writes `band_compare.csv` (share within 5% of the expected window per
+fault type, size and band), `fft_lock.csv` (whether the FFT period matched the file's
+own fault frequency, the other fault type, a shaft harmonic, or nothing),
+`fig_band_compare` and `fig_band_accuracy`.
 
 `fault_detection` writes `figures/detection.csv` (one row per segment, with kurtosis
 and RMS as baselines), `detection_auc.csv` (healthy-vs-faulty AUC per statistic),

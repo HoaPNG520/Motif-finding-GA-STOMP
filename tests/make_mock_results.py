@@ -43,3 +43,13 @@ for cls in ("Normal","IR","OR","B"):
             rows.append(f"{cls}_{load}hp_s{seg},{cls},{7*f},{load},{seg},{e},{b},{rng.normal(3+10*f,1):.3f},{rng.normal(0.1+0.2*f,0.02):.3f},{rng.uniform(0.1,0.4):.3f},{rng.normal(0.15*f,0.03):.3f},{rng.uniform(0.1,0.4):.3f},{rng.normal(0.15*f,0.03):.3f}")
 os.makedirs(sys.argv[1]+"/detection",exist_ok=True)
 open(sys.argv[1]+"/detection/detection.csv","w").write("\n".join(rows)+"\n")
+
+# band_compare layout: IR/OR rows for two variants
+rows=["name,variant,cls,size,load,rpm,expected_m,best_m,detected_period,band_min,band_max"]
+for v,(lo,hi) in (("band_50_300",(40,240)),("band_geometry",(67,130))):
+    for cls,order in (("IR",5.4152),("OR",3.5848)):
+        for size in (7,14,21):
+            for load,rpm in enumerate((1797,1772,1750,1730)):
+                e=round(12000/(order*rpm/60)); b=e+int(rng.integers(-3,4))
+                rows.append(f"{cls}{size:03d}_{load}hp,{v},{cls},{size},{load},{rpm},{e},{b},{b},{lo},{hi}")
+open(sys.argv[1]+"/detection/band.csv","w").write("\n".join(rows)+"\n")
