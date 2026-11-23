@@ -1,0 +1,2 @@
+input,n,best_m,best_ez,best_k,fitness,contrast,regularity,period_reward,detected_period,band_min,band_max,sampling_rate,top_motif_idx,true_m,true_pos1,wall_ms,w_contrast,w_regularity,w_period,period_bias_init,null,contrast_raw,contrast_null
+/tmp/ga_data/B014_2hp_s2.csv,6000,200,0.8559,19,0.519580,0.109886,0.000000,0.995206,204,40,240,12000,702,0,-1,2791.10,0.200,0.300,0.500,1,phase,0.250252,0.140365

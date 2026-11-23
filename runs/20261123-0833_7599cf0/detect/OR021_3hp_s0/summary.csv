@@ -1,0 +1,2 @@
+input,n,best_m,best_ez,best_k,fitness,contrast,regularity,period_reward,detected_period,band_min,band_max,sampling_rate,top_motif_idx,true_m,true_pos1,wall_ms,w_contrast,w_regularity,w_period,period_bias_init,null,contrast_raw,contrast_null
+/tmp/ga_data/OR021_3hp_s0.csv,6000,119,0.5938,11,0.538506,0.119075,0.055048,0.996354,117,40,240,12000,1656,0,-1,2764.15,0.200,0.300,0.500,1,phase,0.242148,0.123073

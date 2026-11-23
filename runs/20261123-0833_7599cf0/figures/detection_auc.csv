@@ -1,0 +1,7 @@
+statistic,description,n_normal,n_fault,auc_all_faults,auc_IR,auc_OR,auc_B
+kurtosis,kurtosis (baseline),12,108,0.9205,1.0,0.9606,0.8009
+rms,RMS (baseline),12,108,1.0,1.0,1.0,1.0
+contrast_raw,contrast at chosen m,12,108,0.5324,0.7245,0.4931,0.3796
+contrast_corr,"contrast - phase surrogate, chosen m",12,108,0.716,0.7894,0.7407,0.6181
+land_raw_mean,"raw contrast, mean over m",12,108,0.669,0.8449,0.6551,0.5069
+land_corr_mean,"contrast - surrogate, mean over m",12,108,0.7292,0.8264,0.7616,0.5995

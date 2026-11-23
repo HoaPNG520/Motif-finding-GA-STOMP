@@ -1,0 +1,8 @@
+metric,value_ms
+total_wall,2800.969
+stomp_total,2125.498
+precompute_total,27.534
+fitness_total,519.397
+ga_overhead,0.155
+n_stomp_calls,836
+avg_per_stomp,2.542
