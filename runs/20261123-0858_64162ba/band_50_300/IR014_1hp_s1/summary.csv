@@ -1,0 +1,2 @@
+input,n,best_m,best_ez,best_k,fitness,contrast,regularity,period_reward,detected_period,band_min,band_max,sampling_rate,top_motif_idx,true_m,true_pos1,wall_ms,w_contrast,w_regularity,w_period,period_bias_init,null,contrast_raw,contrast_null
+/tmp/ga_data/IR014_1hp_s1.csv,6000,162,0.3808,20,0.588068,0.468194,0.000000,0.988857,167,40,240,12000,1741,0,-1,1546.94,0.200,0.300,0.500,1,off,0.468194,nan

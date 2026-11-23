@@ -1,0 +1,130 @@
+[config] Loaded '/kaggle/working/results/band_geometry/IR021_2hp_s2/input_config.ini'
++--------------------------------------------------------------+
+|  GPU: Tesla T4                                              |
+|  SMs: 40   | Global mem: 14911 MB  | MaxThreads/Blk: 1024  |
+|  Shared mem/SM: 64    KB  | Warp size: 32                  |
++--------------------------------------------------------------+
+
++--------------------------------------------------------------+
+|                  ACTIVE CONFIGURATION                       |
++--------------------------------------------------------------+
+|  m range        : [20, 200]
+|  ez range       : [0.25, 1.00]
+|  k range        : [2, 20]
+|  population     : 20
+|  generations    : 20
+|  tournament_k   : 3
+|  mutation_rate  : 0.300
+|  elite_count    : 2
+|  approx_frac    : 0.500
+|  n_seeds        : 0
+|  period band    : fs=12000 Hz, f=[93.0, 178.0] Hz -> [67, 129] samples
+|  weights        : contrast 0.20  regularity 0.30  period 0.50  (biased init on)
+|  null contrast  : off
+|  input_path     : /tmp/ga_data/IR021_2hp_s2.csv
+|  output_dir     : /kaggle/working/results/band_geometry/IR021_2hp_s2
++--------------------------------------------------------------+
+
+[io] Loaded 6000 samples from '/tmp/ga_data/IR021_2hp_s2.csv'
+[io] Saved series (6000 samples) -> '/kaggle/working/results/band_geometry/IR021_2hp_s2/series.csv'
+[config] Saved config -> '/kaggle/working/results/band_geometry/IR021_2hp_s2/run_config.ini'
+
++--------------------------------------------------------------+
+|        GA + STOMP  Hyperparameter Optimisation              |
++--------------------------------------------------------------+
+|  Series length  : 6000   | Seed: 42                       |
+|  Population     : 20     | Generations: 20                 |
+|  m range        : [20, 200]  | approx_frac: 0.50           |
+|  weights        : contrast 0.20  regularity 0.30  period 0.50
+|  FFT-biased init: on
+|  null contrast  : off
++--------------------------------------------------------------+
+
+[fft] Search band: [67, 130] samples  (fs=12000 Hz, f=[93.0, 178.0] Hz)
+[fft] Computing reference MP at w_ref=30 for period detection...
+[fft]   w_ref=30 -> detected period: 75 samples
+[fft] Computing reference MP at w_ref=40 for period detection...
+[fft]   w_ref=40 -> detected period: 75 samples
+[fft] Computing reference MP at w_ref=50 for period detection...
+[fft]   w_ref=50 -> detected period: 93 samples
+[fft] Consensus dominant period: 75 samples (from 3 refs)
+Gen   0 | best=0.5761 | temp=1.000 |   Individual: m=74    ez=0.26  k=20   | fit=0.5761  (contrast=0.303  reg=0.055  period=0.998  consist=0.055)
+Gen   1 | best=0.5761 | temp=0.950 |   Individual: m=74    ez=0.26  k=20   | fit=0.5761  (contrast=0.303  reg=0.055  period=0.998  consist=0.055)
+Gen   2 | best=0.5924 | temp=0.900 |   Individual: m=76    ez=0.71  k=19   | fit=0.5924  (contrast=0.262  reg=0.137  period=0.998  consist=0.137)
+Gen   3 | best=0.6034 | temp=0.850 |   Individual: m=76    ez=0.50  k=20   | fit=0.6034  (contrast=0.317  reg=0.137  period=0.998  consist=0.137)
+Gen   4 | best=0.6034 | temp=0.800 |   Individual: m=76    ez=0.50  k=20   | fit=0.6034  (contrast=0.317  reg=0.137  period=0.998  consist=0.137)
+Gen   5 | best=0.6034 | temp=0.750 |   Individual: m=76    ez=0.50  k=20   | fit=0.6034  (contrast=0.317  reg=0.137  period=0.998  consist=0.137)
+Gen   6 | best=0.6034 | temp=0.700 |   Individual: m=76    ez=0.57  k=20   | fit=0.6034  (contrast=0.317  reg=0.137  period=0.998  consist=0.137)
+Gen   7 | best=0.6034 | temp=0.650 |   Individual: m=76    ez=0.51  k=20   | fit=0.6034  (contrast=0.317  reg=0.137  period=0.998  consist=0.137)
+Gen   8 | best=0.6034 | temp=0.600 |   Individual: m=76    ez=0.54  k=20   | fit=0.6034  (contrast=0.317  reg=0.137  period=0.998  consist=0.137)
+Gen   9 | best=0.6034 | temp=0.550 |   Individual: m=76    ez=0.59  k=20   | fit=0.6034  (contrast=0.317  reg=0.137  period=0.998  consist=0.137)
+Gen  10 | best=0.6034 | temp=0.500 |   Individual: m=76    ez=0.54  k=20   | fit=0.6034  (contrast=0.317  reg=0.137  period=0.998  consist=0.137)
+Gen  11 | best=0.6034 | temp=0.450 |   Individual: m=76    ez=0.51  k=20   | fit=0.6034  (contrast=0.317  reg=0.137  period=0.998  consist=0.137)
+Gen  12 | best=0.6034 | temp=0.400 |   Individual: m=76    ez=0.54  k=20   | fit=0.6034  (contrast=0.317  reg=0.137  period=0.998  consist=0.137)
+Gen  13 | best=0.6034 | temp=0.350 |   Individual: m=76    ez=0.49  k=20   | fit=0.6034  (contrast=0.317  reg=0.137  period=0.998  consist=0.137)
+Gen  14 | best=0.6034 | temp=0.300 |   Individual: m=76    ez=0.55  k=20   | fit=0.6034  (contrast=0.317  reg=0.137  period=0.998  consist=0.137)
+Gen  15 | best=0.6034 | temp=0.250 |   Individual: m=76    ez=0.54  k=20   | fit=0.6034  (contrast=0.317  reg=0.137  period=0.998  consist=0.137)
+Gen  16 | best=0.6034 | temp=0.200 |   Individual: m=76    ez=0.55  k=20   | fit=0.6034  (contrast=0.317  reg=0.137  period=0.998  consist=0.137)
+Gen  17 | best=0.6034 | temp=0.150 |   Individual: m=76    ez=0.54  k=20   | fit=0.6034  (contrast=0.317  reg=0.137  period=0.998  consist=0.137)
+Gen  18 | best=0.6034 | temp=0.100 |   Individual: m=76    ez=0.52  k=20   | fit=0.6034  (contrast=0.317  reg=0.137  period=0.998  consist=0.137)
+Gen  19 | best=0.6034 | temp=0.050 |   Individual: m=76    ez=0.54  k=20   | fit=0.6034  (contrast=0.317  reg=0.137  period=0.998  consist=0.137)
+
++--------------------------------------------------------------+
+|                   OPTIMISATION RESULT                       |
++--------------------------------------------------------------+
+|  Best window_size     : 76                                  |
+|  Best ez_factor       : 0.518                               |
+|  Best min_motif_count : 20                                  |
+|  Composite fitness    : 0.5373                              |
+|    -> Contrast        : 0.1918                              |
+|    -> Spacing Reg     : 0.0000                              |
+|    -> Period Reward   : 0.9978                              |
+|    -> Spacing Consist : 0.0000                              |
+|    -> Count score     : 0.0000                              |
+|    -> Motifs found    : 120                                 |
++--------------------------------------------------------------+
+
+
++--------------------------------------------------------------+
+|                    TIMING BREAKDOWN                         |
++--------------------------------------------------------------+
+|  Total wall time        :   1451.7 ms                       |
+|  STOMP kernel total     :   1102.8 ms  (76.0%)              |
+|  Pre-compute total      :     12.7 ms  ( 0.9%)              |
+|  Fitness eval total     :    273.0 ms  (18.8%)              |
+|  GA overhead total      :      0.2 ms  ( 0.0%)              |
+|  STOMP calls            :      418                            |
+|  Avg ms / STOMP call    :     2.64 ms                       |
++--------------------------------------------------------------+
+
+
+  Fitness convergence
+  0.603 |    #################
+  0.600 |    #################
+  0.597 |    #################
+  0.593 |    #################
+  0.590 |   ##################
+  0.586 |   ##################
+  0.583 |   ##################
+  0.579 |   ##################
+  0.576 | ####################
+         +---------------------
+          Gen0            Gen19
+
+[timer] Timing report -> '/kaggle/working/results/band_geometry/IR021_2hp_s2/timing.csv'
+Running final STOMP (full mode, MPI recovery enabled)...
+[io] Saved MP (5925 rows) -> '/kaggle/working/results/band_geometry/IR021_2hp_s2/matrix_profile.csv'
+
+  Matrix Profile (downsampled to 60 cols)
+  Min=1.331  [.:I:.:I:::Ii.::..:i:i.:I::.I:::i:.:i:.iI:.:.I.:.i:.:ii..i.::]  Max=7.663
+
++--------------------------------------------------------------+
+|  Top motif index     : 1226
++--------------------------------------------------------------+
+
+[main] Landscape (step 5) -> '/kaggle/working/results/band_geometry/IR021_2hp_s2/landscape.csv'
+Multi-seed report skipped (n_seeds = 0)
+
+[main] Fitness-recall sweep skipped (real data -- no ground truth)
+
+All output files written to: /kaggle/working/results/band_geometry/IR021_2hp_s2/

@@ -1,0 +1,2 @@
+input,n,best_m,best_ez,best_k,fitness,contrast,regularity,period_reward,detected_period,band_min,band_max,sampling_rate,top_motif_idx,true_m,true_pos1,wall_ms,w_contrast,w_regularity,w_period,period_bias_init,null,contrast_raw,contrast_null
+/tmp/ga_data/IR021_3hp_s0.csv,6000,140,0.4990,20,0.563566,0.324386,0.000000,0.997378,138,40,240,12000,988,0,-1,1414.67,0.200,0.300,0.500,1,off,0.324386,nan
